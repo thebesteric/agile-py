@@ -5,7 +5,7 @@ disable_existing_loggers: false
 
 # 自定义变量
 log_dir: "./logs"
-app_name: "code-insight"
+app_name: "agile"
 max_log_size: 10485760
 date_fmt: "%Y-%m-%d %H:%M:%S"
 
