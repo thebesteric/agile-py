@@ -1,9 +1,9 @@
 [project]
-name = "agile-py"
+name = "agile-commons"
 version = "0.1.0"
-description = ""
+description = "A simple Python package for demonstration"
 authors = [
-    {name = "eric",email = "whatisjava@hotmail.com"}
+    { name = "eric", email = "whatisjava@hotmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,6 +17,11 @@ dependencies = [
     "pyrootutils (>=1.0.4,<2.0.0)"
 ]
 
+packages = [{ include = "agile_commons", from = "." }]
+include = [
+    { path = "agile_commons/config/**/*", format = "sdist" },
+    { path = "agile_commons/config/**/*", format = "wheel" }
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

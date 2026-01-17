@@ -1,7 +1,7 @@
 from typing import Iterable, Callable, overload
 from pydantic import BaseModel, ConfigDict, Field
 
-from agile.utils.log_helper import LogHelper
+from agile_commons.utils.log_helper import LogHelper
 
 logger = LogHelper.get_logger()
 

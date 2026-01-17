@@ -18,6 +18,8 @@ class LogHelper:
     """
     日志工具类
     """
+    # 默认日志实例（用于内部日志记录）
+    _logger = logging.getLogger()
 
     # 日志实例（单例）
     _instances: dict[str, logging.Logger] = {}
@@ -28,19 +30,26 @@ class LogHelper:
     # 忽略的配置键（logging 模块原生配置项）
     NATIVE_KEYS = {"version", "disable_existing_loggers", "formatters", "handlers", "loggers", "root"}
 
-    @staticmethod
-    def load_default_config():
+    # 配置文件名称
+    CONFIG_FILE_NAME = "agile_logger.yaml"
+
+    @classmethod
+    def load_config(cls):
         """
         读取包内置的配置文件
         :return:
         """
-        # 获取 YAML 文件的绝对路径
-        yaml_path = files("agile.config").joinpath("default_logger.yaml")
-
         # 读取并解析 YAML 文件
-        with open(str(yaml_path), "r", encoding="utf-8") as f:
+        project_root = pyrootutils.find_root()
+        config_yaml_path = project_root / cls.CONFIG_FILE_NAME
+        # 判断文件是否存在，不存在则读取默认配置
+        if not os.path.exists(config_yaml_path):
+            # 获取 YAML 文件的绝对路径
+            cls._logger.warning("使用默认日志配置文件")
+            config_yaml_path = files("agile_commons.config").joinpath(cls.CONFIG_FILE_NAME)
+        # 读取并解析 YAML 文件
+        with open(str(config_yaml_path), "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-
         return config
 
     @classmethod
@@ -62,7 +71,7 @@ class LogHelper:
 
         try:
             # 解析配置文件
-            config = cls.load_default_config()
+            config = cls.load_config()
 
             # 提取 YAML 顶层所有自定义变量（排除 logging 模块原生配置键）
             variables = {k: v for k, v in config.items() if k not in cls.NATIVE_KEYS}
@@ -73,7 +82,8 @@ class LogHelper:
                 log_dir = variables["log_dir"]
                 # 相对路径 → 项目根目录/相对路径（绝对路径）
                 log_dir_abs = project_root / log_dir
-                variables["log_dir"] = str(log_dir_abs)  # 转为字符串路径
+                # 转为字符串路径
+                variables["log_dir"] = str(log_dir_abs)
 
             # 递归替换配置中所有{变量名}占位符
             cls._replace_variables(config, variables)
@@ -87,7 +97,7 @@ class LogHelper:
             cls._instances[name] = logging.getLogger(name)
 
         except Exception as e:
-            print(f"加载日志配置失败: {e}，使用默认配置")
+            cls._logger.warning(f"加载日志配置失败: {e}，使用默认配置")
             # 降级为默认控制台日志
             cls._instances[name] = logging.getLogger(name)
             cls._instances[name].setLevel(logging.DEBUG)
@@ -125,7 +135,3 @@ class LogHelper:
                 # 递归处理嵌套字典
                 cls._replace_variables(value, variables)
             # 忽略列表和其他类型（logging 配置中列表通常是 handler 名称等，无需替换）
-
-
-if __name__ == '__main__':
-    logger = LogHelper.load_default_config()
