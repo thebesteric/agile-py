@@ -123,7 +123,6 @@ class R(BaseModel, Generic[T]):
             response.status_code = self.http_status.value
         return self
 
-    # 数据提取方法
     @classmethod
     def extract_data(cls, result: Optional['R[T]'], default_value: T) -> T:
         """
@@ -139,4 +138,4 @@ class R(BaseModel, Generic[T]):
 
 if __name__ == '__main__':
     print(R.success().set_code(200).set_message("hello world").set_data({"name": "world"}).model_dump())
-    print(R.success(code=200, message="hello world", data={"name": "world"}).model_dump())
+    print(R.error(code=404, message="hello world", data={"name": "world"}).model_dump())
