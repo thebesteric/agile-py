@@ -5,7 +5,7 @@ from typing import Callable
 
 from agile_commons.utils.log_helper import LogHelper
 
-logger = LogHelper.get_logger(__name__)
+logger = LogHelper.get_logger()
 
 
 def timing(_func=None, *, func_name: str = None, log_level: str = "INFO", precision: int = 3):
@@ -33,16 +33,16 @@ def timing(_func=None, *, func_name: str = None, log_level: str = "INFO", precis
             pass
     """
 
-    def _format_time(elapsed_time: float, precision: int) -> str:
+    def _format_time(_elapsed_time: float, _precision: int) -> str:
         """格式化时间为人类可读格式"""
-        if elapsed_time < 1:
-            time_str = f"{elapsed_time * 1000:.{precision}f}ms"
-        elif elapsed_time < 60:
-            time_str = f"{elapsed_time:.{precision}f}s"
+        if _elapsed_time < 1:
+            time_str = f"{_elapsed_time * 1000:.{_precision}f}ms"
+        elif _elapsed_time < 60:
+            time_str = f"{_elapsed_time:.{_precision}f}s"
         else:
-            minutes = int(elapsed_time // 60)
-            seconds = elapsed_time % 60
-            time_str = f"{minutes}m {seconds:.{precision}f}s"
+            minutes = int(_elapsed_time // 60)
+            seconds = _elapsed_time % 60
+            time_str = f"{minutes}m {seconds:.{_precision}f}s"
 
         return time_str
 
@@ -70,10 +70,7 @@ def timing(_func=None, *, func_name: str = None, log_level: str = "INFO", precis
                 except Exception as e:
                     elapsed_time = time.perf_counter() - start_time
                     time_str = _format_time(elapsed_time, precision)
-                    logger.error(
-                        f"函数 '{display_name}' 执行失败，耗时: {time_str}，错误: {str(e)}",
-                        exc_info=True
-                    )
+                    logger.error(f"函数 '{display_name}' 执行失败，耗时: {time_str}，错误: {str(e)}", exc_info=True)
                     raise
 
             return async_wrapper
@@ -95,10 +92,7 @@ def timing(_func=None, *, func_name: str = None, log_level: str = "INFO", precis
                 except Exception as e:
                     elapsed_time = time.perf_counter() - start_time
                     time_str = _format_time(elapsed_time, precision)
-                    logger.error(
-                        f"函数 '{display_name}' 执行失败，耗时: {time_str}，错误: {str(e)}",
-                        exc_info=True
-                    )
+                    logger.error(f"函数 '{display_name}' 执行失败，耗时: {time_str}，错误: {str(e)}", exc_info=True)
                     raise
 
             return sync_wrapper
