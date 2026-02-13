@@ -526,22 +526,26 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
         if typ == 'num_hour_ago':
             num_str = match_obj.group(1)
             num = chinese_num_to_int(num_str)
-            return calculate_hour_ago(now, num)
+            base = adjust_base_by_day_hint(text, now)
+            return calculate_hour_ago(base, num)
 
         if typ == 'num_hour_after':
             num_str = match_obj.group(1)
             num = chinese_num_to_int(num_str)
-            return calculate_hour_after(now, num)
+            base = adjust_base_by_day_hint(text, now)
+            return calculate_hour_after(base, num)
 
         if typ == 'num_min_ago':
             num_str = match_obj.group(1)
             num = chinese_num_to_int(num_str)
-            return calculate_min_ago(now, num)
+            base = adjust_base_by_day_hint(text, now)
+            return calculate_min_ago(base, num)
 
         if typ == 'num_min_after':
             num_str = match_obj.group(1)
             num = chinese_num_to_int(num_str)
-            return calculate_min_after(now, num)
+            base = adjust_base_by_day_hint(text, now)
+            return calculate_min_after(base, num)
 
         if typ == 'time_between':
             period, h1, m1, _, h2, m2, _ = match_obj.groups()
@@ -737,4 +741,21 @@ def infer_period_from_text(text: str) -> str:
     for key in ['凌晨', '清晨', '早上', '上午', '中午', '下午', '傍晚', '晚上']:
         if key in text:
             return key
-    return ""
+    return ''
+
+
+def adjust_base_by_day_hint(text: str, now: datetime.datetime) -> datetime.datetime:
+    """根据文本中的昨天/明天/前天/后天提示调整基准日期"""
+    if '大前天' in text:
+        return now - datetime.timedelta(days=3)
+    if '前天' in text:
+        return now - datetime.timedelta(days=2)
+    if '昨天' in text:
+        return now - datetime.timedelta(days=1)
+    if '明天' in text:
+        return now + datetime.timedelta(days=1)
+    if '后天' in text:
+        return now + datetime.timedelta(days=2)
+    if '大后天' in text:
+        return now + datetime.timedelta(days=3)
+    return now
