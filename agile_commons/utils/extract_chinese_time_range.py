@@ -61,9 +61,9 @@ PATTERNS = [
     (r'(\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(周|月)(?!前|后|内)', 'num_week_month'),  # 纯N周/N月
 
     (r'(\d{1,2}):?(\d{0,2})?(点|时)?\s*[到至]\s*(\d{1,2}):?(\d{0,2})?(点|时)?', 'time_between'),  # HH:MM到HH:MM
+    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)点(\d+分|半)?', 'time_point'),  # 指定时段+时刻
     (r'(\d{1,2}):?(\d{0,2})?(点|时|分)', 'time_point_hm'),  # 单点时刻
     (r'(下)?(星期|周)([一二三四五六日])到(下)?(星期|周)([一二三四五六日])', 'time_range_weekday'),  # 本/下周的星期区间
-    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)点(\d+分|半)?', 'time_point'),  # 指定时段+时刻
     (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)', 'time_period'),  # 指定时段（无具体时刻）
     (r'(上上|下下)(个)?(星期|周|礼拜)([一二三四五六日天])', 'double_relative_weekday'),  # 上上/下下周的某星期
     (r'(上上|下下)(个)?(星期|周|礼拜)?', 'double_relative_week'),  # 上上/下下周
@@ -182,11 +182,17 @@ def get_current_week_range(now) -> List[str]:
 
 
 def parse_time_point(period, hour_str, minute_part) -> Tuple[int, int]:
-    """解析“上午10点半”类时刻为小时、分钟"""
+    """解析“上午10点半”类时刻为24小时制的小时、分钟"""
     h = int(hour_str)
     h = max(0, min(23, h))
-    if period in ['下午', '晚上'] and h < 12:
+    # 将下午/傍晚/晚上视为下午时段，转换为24小时制
+    if period in ['下午', '傍晚', '晚上'] and h < 12:
         h += 12
+    elif period == '中午' and h == 0:
+        h = 12
+    elif period == '中午' and 1 <= h < 12:
+        h = 12 if h == 12 else h + 12 if h <= 6 else h
+
     if minute_part == '半':
         m = 30
     elif minute_part and '分' in minute_part:
@@ -549,7 +555,7 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
                 base = now - datetime.timedelta(days=1)
             elif day == '明天':
                 base = now + datetime.timedelta(days=1)
-            return [datetime.datetime(base.year, base.month, base.day, h, m).strftime('%Y-%m-%d %H:%M')]
+            return [datetime.datetime(base.year, base.month, base.day, h, m).strftime('%Y-%m-%d %H:%M:%S')]
 
         if typ == 'time_period':
             day = match_obj.group(1) or '今天'
@@ -710,7 +716,7 @@ if __name__ == '__main__':
     test_now = datetime.datetime(2026, 2, 12, 11, 30)  # 基准时间：2026-02-12（周三）
 
     # 测试用例1：下个星期二开会
-    test_text1 = "今天晚上8点半记得提醒我写日报。"
+    test_text1 = "今天晚上8点20记得提醒我写日报。"
     result1 = extract_chinese_time_range(test_text1, test_now)
     print(f"\n===== 测试用例1 =====")
     print(f"文本：{test_text1}")
