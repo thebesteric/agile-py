@@ -15,6 +15,11 @@ class TestExtractChineseTimeRange(unittest.TestCase):
                 self.assertEqual(expected, extract_chinese_time_range(text, self.curr))
 
     def test_relative_dates(self):
+        # 覆盖 num_time_ago/num_time_after/relative_quarter/specific_year 等相对日/月/年规则
+        # 相关正则：
+        # (\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(天|周|月|年)(前|后|内)
+        # 近(\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(天|周|月|年)
+        # (\d{4})年(第)?([一二三四1234]|Q[1234]|q[1234])季度 / 本季|上季度|下季度 / (第)?([一二三四1234]|Q[1234]|q[1234])季度 / (\d{4})年
         cases = [
             ("昨天我和你说了什么？", ['2026-02-11 00:00:00', '2026-02-11 23:59:59']),
             ("上周末我们去打篮球了。", ['2026-02-07 00:00:00', '2026-02-08 23:59:59']),
@@ -30,6 +35,12 @@ class TestExtractChineseTimeRange(unittest.TestCase):
         self._assert_cases(cases)
 
     def test_week_expressions(self):
+        # 覆盖 time_range_weekday/weekday/double_relative_week/double_relative_weekday/near_num_time（周）
+        # 相关正则：
+        # (下)?(个)?(星期|周)([一二三四五六日天])到(下)?(个)?(星期|周)([一二三四五六日天])
+        # ((上|下|这|本)个)?礼拜([一二三四五六日天])
+        # (上上|下下)(个)?(星期|周|礼拜)([一二三四五六日天]) / (上上|下下)(个)?(星期|周|礼拜)?
+        # 近(\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(天|周|月|年)
         cases = [
             ("下周五记得提醒我去出差。", ['2026-02-20 00:00:00', '2026-02-20 23:59:59']),
             ("本周五公司团建。", ['2026-02-13 00:00:00', '2026-02-13 23:59:59']),
@@ -45,6 +56,9 @@ class TestExtractChineseTimeRange(unittest.TestCase):
         self._assert_cases(cases)
 
     def test_day_offsets(self):
+        # 覆盖 num_time_ago/num_time_after 的天级偏移
+        # 相关正则：(
+        #  \d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(天|周|月|年)(前|后)
         cases = [
             ("3天前我们开了个会", ['2026-02-09 00:00:00', '2026-02-09 23:59:59']),
             ("3天后完成任务", ['2026-02-15 00:00:00', '2026-02-15 23:59:59']),
@@ -52,6 +66,11 @@ class TestExtractChineseTimeRange(unittest.TestCase):
         self._assert_cases(cases)
 
     def test_time_points_and_periods(self):
+        # 覆盖 time_point/time_period/time_between 的时段和时间点解析
+        # 相关正则：
+        # (昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)(点|时)((\d+)分?|半)?
+        # (昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)
+        # (凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2}):?(\d{0,2})?(点|时)?\s*[到至]\s*(\d{1,2}):?(\d{0,2})?(点|时)?
         cases = [
             ("今天晚上8点半记得提醒我写日报。", ['2026-02-12 20:30:00']),
             ("明天上午7点20有文艺演出。", ['2026-02-13 07:20:00']),
@@ -61,6 +80,10 @@ class TestExtractChineseTimeRange(unittest.TestCase):
         self._assert_cases(cases)
 
     def test_hour_minute_offsets(self):
+        # 覆盖 num_hour_ago/num_hour_after/num_min_ago/num_min_after 的小时/分钟偏移，含“昨天/前天/后天/明天”提示
+        # 相关正则：
+        # (\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(小时|时)(前|后)
+        # (\d+|零|一|二|两|三|四|五|六|七|八|九|十)(分钟|分)(前|后)
         cases = [
             ("1小时前", ['2026-02-12 10:30:00']),
             ("昨天1小时前", ['2026-02-11 10:30:00']),
