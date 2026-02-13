@@ -60,8 +60,8 @@ PATTERNS = [
     (r'下季度|下个季度', 'next_quarter'),  # 下季度范围
     (r'(\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(周|月)(?!前|后|内)', 'num_week_month'),  # 纯N周/N月
 
-    (r'(\d{1,2}):?(\d{0,2})?(点|时)?\s*[到至]\s*(\d{1,2}):?(\d{0,2})?(点|时)?', 'time_between'),  # HH:MM到HH:MM
-    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)点(\d+分|半)?', 'time_point'),  # 指定时段+时刻
+    (r'(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2}):?(\d{0,2})?(点|时)?\s*[到至]\s*(\d{1,2}):?(\d{0,2})?(点|时)?', 'time_between'),  # [时段]HH:MM到HH:MM
+    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)(点|时)((\d+)分?|半)?', 'time_point'),  # 指定时段+时刻（支持“点/时”且分钟可省略“分”）
     (r'(\d{1,2}):?(\d{0,2})?(点|时|分)', 'time_point_hm'),  # 单点时刻
     (r'(下)?(星期|周)([一二三四五六日])到(下)?(星期|周)([一二三四五六日])', 'time_range_weekday'),  # 本/下周的星期区间
     (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)', 'time_period'),  # 指定时段（无具体时刻）
@@ -195,9 +195,12 @@ def parse_time_point(period, hour_str, minute_part) -> Tuple[int, int]:
 
     if minute_part == '半':
         m = 30
-    elif minute_part and '分' in minute_part:
-        m = int(minute_part.replace('分', ''))
-        m = max(0, min(59, m))
+    elif minute_part:
+        cleaned = minute_part.replace('分', '')
+        if cleaned.isdigit():
+            m = max(0, min(59, int(cleaned)))
+        else:
+            m = 0
     else:
         m = 0
     return h, m
@@ -217,7 +220,7 @@ def chinese_num_to_int(num_str) -> int:
 
 
 def add_months(dt, n) -> datetime.datetime:
-    """在日期上增加/减少N个月，自动调整年与日"""
+    """在日期上增加/减少 N 个月，自动调整年与日"""
     y = dt.year
     m = dt.month + n
     day = dt.day
@@ -234,7 +237,7 @@ def add_months(dt, n) -> datetime.datetime:
 
 
 def parse_hm_time(now, h, m) -> List[str]:
-    """解析“10:30”类时刻为当天具体时间"""
+    """解析 10:30 类时刻为当天具体时间"""
     if m is None or m == '':
         m = 0
     try:
@@ -248,8 +251,8 @@ def parse_hm_time(now, h, m) -> List[str]:
     return [target.strftime('%Y-%m-%d %H:%M:%S')]
 
 
-def parse_between_time(now, h1, m1, h2, m2) -> List[str]:
-    """解析“10:00到12:00”类时间段，自动校正颠倒区间"""
+def parse_between_time(now, period, h1, m1, h2, m2, raw_text='') -> List[str]:
+    """解析 10:00 到 12:00 类时间段，支持起始时段词并做 24 小时转换"""
     try:
         h1 = int(h1)
         h2 = int(h2)
@@ -257,49 +260,67 @@ def parse_between_time(now, h1, m1, h2, m2) -> List[str]:
         m2 = int(m2) if m2 and m2 != '' else 0
     except ValueError:
         h1, m1, h2, m2 = 0, 0, 23, 59
+    orig_h2 = h2
     h1 = max(0, min(23, h1))
     h2 = max(0, min(23, h2))
     m1 = max(0, min(59, m1))
     m2 = max(0, min(59, m2))
-    # 若起始时间晚于结束时间则互换，避免返回倒置区间
-    if h1 > h2 or (h1 == h2 and m1 > m2):
-        h1, h2 = h2, h1
-        m1, m2 = m2, m1
-    t1 = datetime.datetime(now.year, now.month, now.day, h1, m1)
-    t2 = datetime.datetime(now.year, now.month, now.day, h2, m2)
-    return [t1.strftime('%Y-%m-%d %H:%M:%S'), t2.strftime('%Y-%m-%d %H:%M:%S')]
+
+    # 若未捕获时段，尝试从原始片段推断
+    if not period and raw_text:
+        period = infer_period_from_text(raw_text)
+
+    # 时段影响起始时间的 24 小时转换
+    if period in ['下午', '傍晚', '晚上'] and h1 < 12:
+        h1 += 12
+        if h2 < 12:  # 若结束未标明时段且小于12，跟随起始时段做下午转换
+            h2 += 12
+    elif period == '中午' and h1 == 0:
+        h1 = 12
+
+    # 若起始时间晚于结束时间，尝试认为跨天到次日
+    start = datetime.datetime(now.year, now.month, now.day, h1, m1)
+    end = datetime.datetime(now.year, now.month, now.day, h2, m2)
+    if start > end:
+        # 若原始结束为 12 点且时段为晚上，视为次日 0 点
+        if period in ['下午', '傍晚', '晚上'] and orig_h2 == 12:
+            end = datetime.datetime(now.year, now.month, now.day, 0, m2) + datetime.timedelta(days=1)
+        else:
+            end += datetime.timedelta(days=1)
+
+    return [start.strftime('%Y-%m-%d %H:%M:%S'), end.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_hour_ago(now, num) -> List[str]:
-    """计算N小时前的时间点"""
+    """计算 N 小时前的时间点"""
     num = max(1, min(1000, num))
     t = now - datetime.timedelta(hours=num)
     return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_hour_after(now, num) -> List[str]:
-    """计算N小时后的时间点"""
+    """计算 N 小时后的时间点"""
     num = max(1, min(1000, num))
     t = now + datetime.timedelta(hours=num)
     return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_min_ago(now, num) -> List[str]:
-    """计算N分钟前的时间点"""
+    """计算 N 分钟前的时间点"""
     num = max(1, min(1440, num))
     t = now - datetime.timedelta(minutes=num)
     return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_min_after(now, num) -> List[str]:
-    """计算N分钟后的时间点"""
+    """计算 N 分钟后的时间点"""
     num = max(1, min(1440, num))
     t = now + datetime.timedelta(minutes=num)
     return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_time_ago(now, num, unit) -> List[str]:
-    """根据单位计算N天/周/月/年前的时间范围"""
+    """根据单位计算 N 天/周/月/年前的时间范围"""
     logger.info(f"计算 {num} {unit} 前的时间，基准时间：{now}")
     num = max(1, min(100, num))
     if unit == '天':
@@ -331,7 +352,7 @@ def calculate_time_ago(now, num, unit) -> List[str]:
 
 
 def calculate_time_after(now, num, unit) -> List[str]:
-    """根据单位计算N天/月/年后的时间范围"""
+    """根据单位计算 N 天/月/年后的时间范围"""
     num = max(1, min(100, num))
     if unit == '天':
         target_dt = now + datetime.timedelta(days=num)
@@ -351,7 +372,7 @@ def calculate_time_after(now, num, unit) -> List[str]:
 
 
 def calculate_near_time(now, num, unit) -> List[str]:
-    """计算近N天/周/月/年的时间范围"""
+    """计算近 N 天/周/月/年的时间范围"""
     num = max(1, min(100, num))
     if unit == '天':
         start = now - datetime.timedelta(days=num - 1)
@@ -360,7 +381,7 @@ def calculate_near_time(now, num, unit) -> List[str]:
             now.strftime('%Y-%m-%d 23:59:59')
         ]
     elif unit == '周':
-        # 核心修复：近N周 = 从N周前的周一 到 本周日
+        # 核心修复：近 N 周 = 从 N 周前的周一 到 本周日
         start_monday = now - datetime.timedelta(days=now.weekday() + (num - 1) * 7)
         end_sunday = start_monday + datetime.timedelta(days=7 * num - 1)
         return [
@@ -387,7 +408,7 @@ def calculate_near_time(now, num, unit) -> List[str]:
 
 
 def calculate_time_inner(now, num, unit) -> List[str]:
-    """计算未来N天/周/月/年内的时间范围"""
+    """计算未来 N 天/周/月/年内的时间范围"""
     num = max(1, min(100, num))
     if unit == '天':
         end_dt = now + datetime.timedelta(days=num - 1)
@@ -421,7 +442,7 @@ def calculate_time_inner(now, num, unit) -> List[str]:
 
 
 def calculate_next_weekday(now, weekday_char) -> List[str]:
-    """处理“下个星期X”场景，返回单日区间"""
+    """处理 “下个星期 X” 场景，返回单日区间"""
     dt = get_next_week_weekday(now, weekday_char)
     return get_day_range(dt)
 
@@ -523,8 +544,8 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
             return calculate_min_after(now, num)
 
         if typ == 'time_between':
-            h1, m1, _, h2, m2, _ = match_obj.groups()
-            return parse_between_time(now, h1, m1, h2, m2)
+            period, h1, m1, _, h2, m2, _ = match_obj.groups()
+            return parse_between_time(now, period, h1, m1, h2, m2, match_obj.group(0))
 
         if typ == 'time_point_hm':
             h, m, _ = match_obj.groups()
@@ -549,7 +570,7 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
         if typ == 'time_point':
             day = match_obj.group(1) or '今天'
             period = match_obj.group(2)
-            h, m = parse_time_point(period, match_obj.group(3), match_obj.group(4))
+            h, m = parse_time_point(period, match_obj.group(3), match_obj.group(5))
             base = now
             if day == '昨天':
                 base = now - datetime.timedelta(days=1)
@@ -711,13 +732,9 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
     return []
 
 
-# 测试运行
-if __name__ == '__main__':
-    test_now = datetime.datetime(2026, 2, 12, 11, 30)  # 基准时间：2026-02-12（周三）
-
-    # 测试用例1：下个星期二开会
-    test_text1 = "今天晚上8点20记得提醒我写日报。"
-    result1 = extract_chinese_time_range(test_text1, test_now)
-    print(f"\n===== 测试用例1 =====")
-    print(f"文本：{test_text1}")
-    print(f"结果：{result1}")
+def infer_period_from_text(text: str) -> str:
+    """从原始片段中推断时段关键词"""
+    for key in ['凌晨', '清晨', '早上', '上午', '中午', '下午', '傍晚', '晚上']:
+        if key in text:
+            return key
+    return ""
