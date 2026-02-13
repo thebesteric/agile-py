@@ -239,7 +239,7 @@ def parse_hm_time(now, h, m) -> List[str]:
     h = max(0, min(23, h))
     m = max(0, min(59, m))
     target = datetime.datetime(now.year, now.month, now.day, h, m)
-    return [target.strftime('%Y-%m-%d %H:%M')]
+    return [target.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def parse_between_time(now, h1, m1, h2, m2) -> List[str]:
@@ -261,35 +261,35 @@ def parse_between_time(now, h1, m1, h2, m2) -> List[str]:
         m1, m2 = m2, m1
     t1 = datetime.datetime(now.year, now.month, now.day, h1, m1)
     t2 = datetime.datetime(now.year, now.month, now.day, h2, m2)
-    return [t1.strftime('%Y-%m-%d %H:%M'), t2.strftime('%Y-%m-%d %H:%M')]
+    return [t1.strftime('%Y-%m-%d %H:%M:%S'), t2.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_hour_ago(now, num) -> List[str]:
     """计算N小时前的时间点"""
     num = max(1, min(1000, num))
     t = now - datetime.timedelta(hours=num)
-    return [t.strftime('%Y-%m-%d %H:%M')]
+    return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_hour_after(now, num) -> List[str]:
     """计算N小时后的时间点"""
     num = max(1, min(1000, num))
     t = now + datetime.timedelta(hours=num)
-    return [t.strftime('%Y-%m-%d %H:%M')]
+    return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_min_ago(now, num) -> List[str]:
     """计算N分钟前的时间点"""
     num = max(1, min(1440, num))
     t = now - datetime.timedelta(minutes=num)
-    return [t.strftime('%Y-%m-%d %H:%M')]
+    return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_min_after(now, num) -> List[str]:
     """计算N分钟后的时间点"""
     num = max(1, min(1440, num))
     t = now + datetime.timedelta(minutes=num)
-    return [t.strftime('%Y-%m-%d %H:%M')]
+    return [t.strftime('%Y-%m-%d %H:%M:%S')]
 
 
 def calculate_time_ago(now, num, unit) -> List[str]:
@@ -710,29 +710,8 @@ if __name__ == '__main__':
     test_now = datetime.datetime(2026, 2, 12, 11, 30)  # 基准时间：2026-02-12（周三）
 
     # 测试用例1：下个星期二开会
-    test_text1 = "下个星期二开会。"
+    test_text1 = "今天晚上8点半记得提醒我写日报。"
     result1 = extract_chinese_time_range(test_text1, test_now)
     print(f"\n===== 测试用例1 =====")
     print(f"文本：{test_text1}")
-    print(f"结果：{result1}")  # 预期：2026-02-17 00:00:00 至 2026-02-17 23:59:59
-
-    # 测试用例2：下季度计划拓展新业务。
-    test_text2 = "下季度计划拓展新业务。"
-    result2 = extract_chinese_time_range(test_text2, test_now)
-    print(f"\n===== 测试用例2 =====")
-    print(f"文本：{test_text2}")
-    print(f"结果：{result2}")  # 预期：2026-04-01 至 2026-06-30
-
-    # 测试用例3：两周的数据汇总
-    test_text3 = "两周的数据汇总"
-    result3 = extract_chinese_time_range(test_text3, test_now)
-    print(f"\n===== 测试用例3 =====")
-    print(f"文本：{test_text3}")
-    print(f"结果：{result3}")  # 预期：2026-01-27 至 2026-02-12
-
-    # 测试用例4：五个月前入职的
-    test_text4 = "五个月前入职的"
-    result4 = extract_chinese_time_range(test_text4, test_now)
-    print(f"\n===== 测试用例4 =====")
-    print(f"文本：{test_text4}")
-    print(f"结果：{result4}")  # 预期：2025-09-01 至 2025-09-30
+    print(f"结果：{result1}")
