@@ -131,7 +131,7 @@ class R(BaseModel, Generic[T]):
         :param default_value: 默认值
         :return: 提取到的数据或默认值
         """
-        if result and result.succeed and result.code == cls.SUCCESS_CODE.value:
+        if result and result.succeed:
             return result.data if result.data is not None else default_value
         return default_value
 

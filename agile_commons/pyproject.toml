@@ -14,13 +14,21 @@ dependencies = [
     "pyyaml (>=6.0.3,<7.0.0)",
     "colorlog (>=6.10.1,<7.0.0)",
     "pydantic (>=2.12.5,<3.0.0)",
-    "pyrootutils (>=1.0.4,<2.0.0)"
+    "pyrootutils (>=1.0.4,<2.0.0)",
+    "pytest (>=9.0.2,<10.0.0)",
+    "cachetools (>=7.0.0,<8.0.0)"
 ]
 
+# 指定要包含在打包中的子目录
 packages = [{ include = "agile_commons", from = "." }]
 include = [
     { path = "agile_commons/config/**/*", format = "sdist" },
     { path = "agile_commons/config/**/*", format = "wheel" }
+]
+# 明确排除测试目录不参与打包（同时对 sdist 与 wheel 生效）
+exclude = [
+    { path = "agile_commons/tests/**/*", format = "sdist" },
+    { path = "agile_commons/tests/**/*", format = "wheel" }
 ]
 
 [build-system]
