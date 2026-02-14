@@ -4,9 +4,9 @@ import time
 
 from cachetools import TTLCache, LRUCache
 
-from agile_commons.cache.base_cahce import BaseCache
-from agile_commons.utils.log_helper import LogHelper
-from agile_commons.utils.time_unit import TimeUnit
+from libs.agile_commons.src.cache.base_cahce import BaseCache
+from libs.agile_commons.src.utils.log_helper import LogHelper
+from libs.agile_commons.src.utils.time_unit import TimeUnit
 
 logger = LogHelper.get_logger()
 

@@ -1,7 +1,7 @@
 import datetime
 import unittest
 
-from agile_commons.utils.extract_chinese_time_range import extract_chinese_time_range
+from libs.agile_commons.src.utils.extract_chinese_time_range import extract_chinese_time_range
 
 
 class TestExtractChineseTimeRange(unittest.TestCase):

@@ -3,7 +3,7 @@ import inspect
 import time
 from typing import Callable
 
-from agile_commons.utils.log_helper import LogHelper
+from libs.agile_commons.src.utils.log_helper import LogHelper
 
 logger = LogHelper.get_logger()
 

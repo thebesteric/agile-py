@@ -9,7 +9,7 @@ T = TypeVar('T')
 
 @runtime_checkable
 class StatusWritableResponse(Protocol):
-    status_code: int
+    status_code: int | None
 
 
 class R(BaseModel, Generic[T]):
