@@ -1,50 +1,44 @@
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=2.3.1,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "agile-commons"
-dynamic = ["version"]
+version = "0.1.0"
 description = "A simple Python package for demonstration"
-url = "https://github.com/thebesteric/agile-py"
-authors = [
-    { name = "eric", email = "whatisjava@hotmail.com" }
-]
+license = "MIT"
 readme = "README.md"
-license = { text = "MIT" }
-requires-python = ">=3.12"
+homepage = "https://github.com/thebesteric/agile-py"
+repository = "https://github.com/thebesteric/agile-py"
+authors = ["Eric <whatisjava@hotmail.com>"]
 keywords = ["tools", "utilities"]
-dependencies = [
-    "setuptools (>=80.9.0,<81.0.0)",
-    "wheel (>=0.45.1,<0.46.0)",
-    "twine (>=6.2.0,<7.0.0)",
-    "pyyaml (>=6.0.3,<7.0.0)",
-    "colorlog (>=6.10.1,<7.0.0)",
-    "pydantic (>=2.12.5,<3.0.0)",
-    "pyrootutils (>=1.0.4,<2.0.0)",
-    "cachetools (>=7.0.0,<8.0.0)"
+packages = [
+    { include = "*", from = "src" }
 ]
-
-# 指定要包含在打包中的子目录
-packages = [{ include = "agile_commons", from = "." }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 include = [
-    { path = "agile_commons/config/**/*", format = "sdist" },
-    { path = "agile_commons/config/**/*", format = "wheel" }
+    "src/agile_commons/config/**/*"
 ]
-# 明确排除测试目录不参与打包（同时对 sdist 与 wheel 生效）
 exclude = [
-    { path = "agile_commons/tests/**/*", format = "sdist" },
-    { path = "agile_commons/tests/**/*", format = "wheel" }
+    "tests/**/*",
+    "logs/**/*",
+    "dist/**/*"
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest (>=9.0.2,<10.0.0)",
-]
+[tool.poetry.dependencies]
+python = ">=3.12"
+pyyaml = "^6.0.3"
+colorlog = "^6.10.1"
+pydantic = "^2.12.5"
+pyrootutils = "^1.0.4"
+cachetools = "^7.0.0"
 
-[project.urls]
-Homepage = "https://github.com/thebesteric/agile-py"
-Repository = "https://github.com/thebesteric/agile-py"
-
-[tool.setuptools.dynamic]
-version = { attr = "agile_commons.__version__" }
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+twine = "^6.2.0"
+setuptools = "^80.9.0"
+wheel = "^0.45.1"
