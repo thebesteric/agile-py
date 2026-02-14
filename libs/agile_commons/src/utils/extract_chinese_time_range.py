@@ -60,8 +60,8 @@ PATTERNS = [
     (r'下季度|下个季度', 'next_quarter'),  # 下季度范围
     (r'(\d+|零|一|二|两|三|四|五|六|七|八|九|十)(?:个)?(周|月)(?!前|后|内)', 'num_week_month'),  # 纯N周/N月
 
-    (r'(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)?\s*(\d{1,2}):?(\d{0,2})?(点|时)?\s*[到至]\s*(\d{1,2}):?(\d{0,2})?(点|时)?', 'time_between'),  # [时段]HH:MM到HH:MM
-    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*(\d+)(点|时)((\d+)分?|半)?', 'time_point'),  # 指定时段+时刻（支持“点/时”且分钟可省略“分”）
+    (r'(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)?\s*([0-9零一二两三四五六七八九十]{1,3}):?([0-9零一二两三四五六七八九十]{0,2})?(点|时)?\s*[到至]\s*([0-9零一二两三四五六七八九十]{1,3}):?([0-9零一二两三四五六七八九十]{0,2})?(点|时)?', 'time_between'),  # [时段]HH:MM到HH:MM，支持中文数字
+    (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)\s*([0-9零一二两三四五六七八九十]+)(点|时)(([0-9零一二两三四五六七八九十]+)分?|半)?', 'time_point'),  # 指定时段+时刻（支持中文数字）
     (r'(\d{1,2}):?(\d{0,2})?(点|时|分)', 'time_point_hm'),  # 单点时刻
     (r'(下)?(星期|周)([一二三四五六日])到(下)?(星期|周)([一二三四五六日])', 'time_range_weekday'),  # 本/下周的星期区间
     (r'(昨天|今天|明天)?\s*(凌晨|清晨|早上|上午|中午|下午|傍晚|晚上)', 'time_period'),  # 指定时段（无具体时刻）
@@ -183,8 +183,7 @@ def get_current_week_range(now) -> List[str]:
 
 def parse_time_point(period, hour_str, minute_part) -> Tuple[int, int]:
     """解析“上午10点半”类时刻为24小时制的小时、分钟"""
-    h = int(hour_str)
-    h = max(0, min(23, h))
+    h = clamp_time_num(hour_str, 23)
     # 将下午/傍晚/晚上视为下午时段，转换为24小时制
     if period in ['下午', '傍晚', '晚上'] and h < 12:
         h += 12
@@ -197,8 +196,8 @@ def parse_time_point(period, hour_str, minute_part) -> Tuple[int, int]:
         m = 30
     elif minute_part:
         cleaned = minute_part.replace('分', '')
-        if cleaned.isdigit():
-            m = max(0, min(59, int(cleaned)))
+        if cleaned:
+            m = clamp_time_num(cleaned, 59)
         else:
             m = 0
     else:
@@ -217,6 +216,28 @@ def chinese_num_to_int(num_str) -> int:
         num = 1
         logger.warning(f"未匹配到数字，使用默认值：{num}")
     return max(1, min(1000, num))
+
+
+def chinese_time_str_to_int(num_str: str, default: int = 0) -> int:
+    if not num_str:
+        return default
+    if num_str.isdigit():
+        return int(num_str)
+    total = 0
+    if '十' in num_str:
+        prefix, suffix = num_str.split('十', 1)
+        prefix_val = CHINESE_NUM_MAP.get(prefix, 0) if prefix else 1
+        total = (prefix_val if prefix_val > 0 else 1) * 10 if prefix else 10
+        if suffix:
+            total += CHINESE_NUM_MAP.get(suffix, 0)
+    else:
+        total = CHINESE_NUM_MAP.get(num_str, default)
+    return total if total is not None else default
+
+
+def clamp_time_num(num_str, upper_bound: int) -> int:
+    value = chinese_time_str_to_int(num_str, default=0)
+    return max(0, min(upper_bound, value))
 
 
 def add_months(dt, n) -> datetime.datetime:
@@ -253,13 +274,10 @@ def parse_hm_time(now, h, m) -> List[str]:
 
 def parse_between_time(now, period, h1, m1, h2, m2, raw_text='') -> List[str]:
     """解析 10:00 到 12:00 类时间段，支持起始时段词并做 24 小时转换"""
-    try:
-        h1 = int(h1)
-        h2 = int(h2)
-        m1 = int(m1) if m1 and m1 != '' else 0
-        m2 = int(m2) if m2 and m2 != '' else 0
-    except ValueError:
-        h1, m1, h2, m2 = 0, 0, 23, 59
+    h1 = clamp_time_num(h1, 23)
+    h2 = clamp_time_num(h2, 23)
+    m1 = clamp_time_num(m1, 59) if m1 is not None else 0
+    m2 = clamp_time_num(m2, 59) if m2 is not None else 0
     orig_h2 = h2
     h1 = max(0, min(23, h1))
     h2 = max(0, min(23, h2))
@@ -549,7 +567,8 @@ def extract_chinese_time_range(text, now: datetime.datetime = None) -> List[str]
 
         if typ == 'time_between':
             period, h1, m1, _, h2, m2, _ = match_obj.groups()
-            return parse_between_time(now, period, h1, m1, h2, m2, match_obj.group(0))
+            base = adjust_base_by_day_hint(text, now)
+            return parse_between_time(base, period, h1, m1, h2, m2, match_obj.group(0))
 
         if typ == 'time_point_hm':
             h, m, _ = match_obj.groups()
