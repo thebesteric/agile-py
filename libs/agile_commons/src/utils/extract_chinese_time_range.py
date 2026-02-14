@@ -3,7 +3,7 @@ import datetime
 from calendar import monthrange
 from typing import List, Tuple
 
-from libs.agile_commons.src.utils.log_helper import LogHelper
+from .log_helper import LogHelper
 
 logger = LogHelper.get_logger()
 
