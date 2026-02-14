@@ -1,16 +1,12 @@
-import logging
 import threading
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, ConfigDict
 
-# 配置日志：输出时间、线程、日志级别、内容
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(threadName)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+from libs.agile_commons.src.utils.log_helper import LogHelper
+
+logger = LogHelper.get_logger()
 
 
 class MonitorData(BaseModel):

@@ -135,3 +135,17 @@ class LogHelper:
                 # 递归处理嵌套字典
                 cls._replace_variables(value, variables)
             # 忽略列表和其他类型（logging 配置中列表通常是 handler 名称等，无需替换）
+
+    @staticmethod
+    def basic_config(name=None, **kwargs) -> logging.Logger:
+        """
+        直接使用 logging.basicConfig 配置日志（不使用 YAML 配置）
+        适用于简单场景或临时调试
+        例如：
+            logger = LogHelper.basic_config(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+        :param name: 日志实例名称
+        :param kwargs: logging.basicConfig 接受的参数
+        :return: 日志实例
+        """
+        logging.basicConfig(**kwargs)
+        return logging.getLogger(name)
