@@ -3,7 +3,8 @@ import logging.config
 import os
 import re
 from importlib.resources import files
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable
 
 import pyrootutils
 import yaml
@@ -20,40 +21,43 @@ class LogHelper:
     """
     # 默认日志实例（用于内部日志记录）
     _logger = logging.getLogger()
-
     # 日志实例（单例）
     _instances: dict[str, logging.Logger] = {}
-
     # 匹配{变量名}的正则（支持字母、数字、下划线）
     _var_pattern = re.compile(r"\{(\w+)\}")
-
     # 忽略的配置键（logging 模块原生配置项）
     NATIVE_KEYS = {"version", "disable_existing_loggers", "formatters", "handlers", "loggers", "root"}
-
     # 配置文件名称
-    CONFIG_FILE_NAME = "agile_logger.yaml"
+    CONFIG_FILE_NAME = "agile-logger.yaml"
+    # 默认搜索起点（用于定位项目根目录）
+    DEFAULT_SEARCH_FROM = "."
+    # 默认指示器列表：项目根目录标识文件、常见项目配置文件、Git 目录等
+    DEFAULT_INDICATOR = (".project-root", "setup.cfg", "setup.py", ".git", "pyproject.toml", CONFIG_FILE_NAME)
 
     @classmethod
-    def load_config(cls):
+    def _load_config(cls, *, search_from: str | Path = None, indicator: str | Iterable[str] = None) -> tuple[Path, dict[str, Any]]:
         """
         读取包内置的配置文件
         :return:
         """
+        # 设置默认值
+        search_from = cls.DEFAULT_SEARCH_FROM if not search_from else search_from
+        indicator = cls.DEFAULT_INDICATOR if not indicator else indicator
         # 读取并解析 YAML 文件
-        project_root = pyrootutils.find_root()
+        project_root = pyrootutils.find_root(search_from=search_from, indicator=indicator)
         config_yaml_path = project_root / cls.CONFIG_FILE_NAME
         # 判断文件是否存在，不存在则读取默认配置
         if not os.path.exists(config_yaml_path):
             # 获取 YAML 文件的绝对路径
             cls._logger.warning("使用默认日志配置文件")
-            config_yaml_path = files("agile_commons.config").joinpath(cls.CONFIG_FILE_NAME)
+            config_yaml_path = files("libs.agile_commons.src.config").joinpath(cls.CONFIG_FILE_NAME)
         # 读取并解析 YAML 文件
         with open(str(config_yaml_path), "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        return config
+        return project_root, config
 
     @classmethod
-    def get_logger(cls, name: str | None = None) -> logging.Logger:
+    def get_logger(cls, name: str | None = None, *, search_from: str | Path = None, indicator: str | Iterable[str] = None) -> logging.Logger:
         """
         获取日志实例（单例）
         @param name: 日志实例名称
@@ -71,13 +75,12 @@ class LogHelper:
 
         try:
             # 解析配置文件
-            config = cls.load_config()
+            project_root, config = cls._load_config(search_from=search_from, indicator=indicator)
 
             # 提取 YAML 顶层所有自定义变量（排除 logging 模块原生配置键）
             variables = {k: v for k, v in config.items() if k not in cls.NATIVE_KEYS}
 
             # 处理 log_dir：拼接项目根目录，确保绝对路径
-            project_root = pyrootutils.find_root()
             if "log_dir" in variables:
                 log_dir = variables["log_dir"]
                 # 相对路径 → 项目根目录/相对路径（绝对路径）
@@ -97,7 +100,7 @@ class LogHelper:
             cls._instances[name] = logging.getLogger(name)
 
         except Exception as e:
-            cls._logger.warning(f"加载日志配置失败: {e}，使用默认配置")
+            cls._logger.warning(f"读取日志配置（{cls.CONFIG_FILE_NAME}）失败: {e}，使用默认配置")
             # 降级为默认控制台日志
             cls._instances[name] = logging.getLogger(name)
             cls._instances[name].setLevel(logging.DEBUG)
