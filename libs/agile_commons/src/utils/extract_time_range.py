@@ -1,5 +1,5 @@
 """
-中文/英文时间表达式解析器 V2 版本
+中文/英文时间表达式解析器
 
 核心设计思路：
 1. 槽位(Slot)机制：一条语句可匹配多个正则，每个正则负责解析不同的槽位
@@ -12,7 +12,7 @@
 - SlotParser: 槽位解析器基类
 - ChineseSlotParser: 中文槽位解析器
 - EnglishSlotParser: 英文槽位解析器
-- TimeRangeExtractorV2: 时间范围提取器主类
+- TimeRangeExtractor: 时间范围提取器主类
 """
 
 import re
@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from calendar import monthrange
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Dict, Tuple, Any
+from typing import List, Optional, Dict, Tuple, Any, overload, override
 
 from .log_helper import LogHelper
 
@@ -289,7 +289,8 @@ class ChineseSlotParser(SlotParserBase):
             (r'(上上|下下)(个)?(星期|周|礼拜)', 'double_relative_week', SlotType.WEEKDAY),
             (r'(上|下)周末', 'weekend', SlotType.WEEKDAY),
             (r'((上|下|这|本)(个)?)?(星期|周|礼拜)([一二三四五六日天])', 'weekday', SlotType.WEEKDAY),
-            (r'(本周|这周|这个周|上周|上个周|下周|下个周|这星期|这个星期|本星期|上星期|上个星期|下星期|下个星期|这个礼拜|本礼拜|上礼拜|上个礼拜|下礼拜|下个礼拜)', 'relative_week', SlotType.WEEKDAY),
+            (r'(本周|这周|这个周|上周|上个周|下周|下个周|这星期|这个星期|本星期|上星期|上个星期|下星期|下个星期|这个礼拜|本礼拜|上礼拜|上个礼拜|下礼拜|下个礼拜)',
+             'relative_week', SlotType.WEEKDAY),
 
             # === 时间范围槽位 ===
             (r'(下)?(个)?(星期|周)([一二三四五六日天])[到至](下)?(个)?(星期|周)([一二三四五六日天])', 'weekday_range', SlotType.WEEKDAY),
@@ -341,6 +342,7 @@ class ChineseSlotParser(SlotParserBase):
             return self.NUM_MAP[num_str]
         return self._parse_complex_number(num_str)
 
+    @override
     def _extract_slot(self, match: re.Match, pattern_name: str, slot_type: SlotType) -> Optional[TimeSlot]:
         """从匹配结果中提取槽位"""
         slot = TimeSlot()
@@ -415,6 +417,7 @@ class ChineseSlotParser(SlotParserBase):
             elif pattern_name == 'double_relative_week':
                 direction = groups[0]
                 slot.week_offset = -2 if direction == '上上' else 2
+                slot.is_range_start = True
 
             elif pattern_name == 'weekend':
                 direction = groups[0]
@@ -438,6 +441,7 @@ class ChineseSlotParser(SlotParserBase):
                 for key, offset in self.RELATIVE_WEEK_MAP.items():
                     if key == word:
                         slot.week_offset = offset
+                        slot.is_range_start = True
                         break
 
             elif pattern_name == 'weekday_range':
@@ -607,6 +611,7 @@ class EnglishSlotParser(SlotParserBase):
             (f'(?i){num_pattern}\\s*(minutes?)\\s*(?:later|from now)', 'minute_offset_after', SlotType.RELATIVE),
         ]
 
+    @override
     def _extract_slot(self, match: re.Match, pattern_name: str, slot_type: SlotType) -> Optional[TimeSlot]:
         """从匹配结果中提取槽位"""
         slot = TimeSlot()
@@ -675,6 +680,7 @@ class EnglishSlotParser(SlotParserBase):
                     slot.week_offset = 1
                 else:
                     slot.week_offset = 0
+                slot.is_range_start = True
 
             elif pattern_name == 'weekday':
                 prefix = groups[0].lower() if groups[0] else ''
@@ -804,7 +810,7 @@ class TimeSlotCombiner:
             return self._handle_quarter(slot, now)
 
         # 处理周/星期
-        if slot.weekday is not None:
+        if slot.weekday is not None or slot.week_offset != 0 or slot.is_range_start:
             return self._handle_weekday(slot, now)
 
         # 处理具体日期时间
@@ -1065,7 +1071,7 @@ class TimeSlotCombiner:
         # 处理周末
         if slot.is_range_start and slot.weekday == 5:
             this_sat = self._get_weekday_date(now, 5, 0)
-            sat = self._get_weekday_date(now, 5, slot.week_offset)
+            sat = this_sat + datetime.timedelta(weeks=slot.week_offset)
             sun = sat + datetime.timedelta(days=1)
             return [
                 sat.strftime('%Y-%m-%d 00:00:00'),
@@ -1227,9 +1233,9 @@ class TimeSlotCombiner:
         return datetime.datetime(year, month, day, dt.hour, dt.minute, dt.second)
 
 
-class TimeRangeExtractorV2:
+class TimeRangeExtractor:
     """
-    时间范围提取器 V2 版本
+    时间范围提取器
 
     核心特性：
     1. 槽位机制：多个正则分别解析不同槽位，然后组合
@@ -1237,7 +1243,7 @@ class TimeRangeExtractorV2:
     3. 面向对象设计：使用类封装槽位和解析逻辑
 
     使用示例：
-        extractor = TimeRangeExtractorV2(language='zh')
+        extractor = TimeRangeExtractor(language='zh')
         result = extractor.extract("明天下午3点开会")
         # ['2026-02-13 15:00:00']
     """
@@ -1290,8 +1296,7 @@ class TimeRangeExtractorV2:
 
         # 日志输出匹配结果
         for result in parse_results:
-            logger.debug(f"匹配: pattern={result.pattern_name}, text='{result.matched_text}', "
-                        f"slot_type={result.slot_type.value}")
+            logger.debug(f"匹配: pattern={result.pattern_name}, text='{result.matched_text}', slot_type={result.slot_type.value}")
 
         # 提取所有槽位
         slots = [r.slot for r in parse_results]
@@ -1319,7 +1324,7 @@ class TimeRangeExtractorV2:
             for kept_result in kept:
                 # 检查当前结果是否被已保留的结果完全包含
                 if (result.start_pos >= kept_result.start_pos and
-                    result.end_pos <= kept_result.end_pos):
+                        result.end_pos <= kept_result.end_pos):
                     is_contained = True
                     break
             if not is_contained:
@@ -1362,33 +1367,17 @@ class TimeRangeExtractorV2:
         return results
 
 
-def extract_chinese_time_range_v2(text: str, now: datetime.datetime = None, language: str = 'zh') -> List[str]:
+def extract_time_range(text: str, now: datetime.datetime = None, language: str = 'zh') -> List[str]:
     """
-    V2 版本的时间范围提取函数（兼容旧版 API）
+    提取时间范围的快捷函数
 
     Args:
         text: 输入文本
         now: 当前时间
-        language: 语言选择，'zh' 中文，'en' 英文
+        language: 语言选择，'zh' 表示中文，'en' 表示英文
 
     Returns:
         时间范围列表
     """
-    extractor = TimeRangeExtractorV2(language=language)
+    extractor = TimeRangeExtractor(language)
     return extractor.extract(text, now)
-
-
-# 导出便捷函数和类
-__all__ = [
-    'TimeRangeExtractorV2',
-    'extract_chinese_time_range_v2',
-    'TimeSlot',
-    'SlotType',
-    'OffsetType',
-    'Language',
-    'ChineseSlotParser',
-    'EnglishSlotParser',
-    'TimeSlotCombiner',
-    'ParseResult'
-]
-

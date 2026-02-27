@@ -21,7 +21,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 include = [
-    "src/agile_commons/config/**/*"
+    "src/config/**/*"
 ]
 exclude = [
     "tests/**/*",
@@ -36,9 +36,13 @@ colorlog = "^6.10.1"
 pydantic = "^2.12.5"
 pyrootutils = "^1.0.4"
 cachetools = "^7.0.0"
+typer = "^0.23.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
 twine = "^6.2.0"
 setuptools = "^80.9.0"
 wheel = "^0.45.1"
+
+[tool.poetry.scripts]
+agile = "agile_shell:main"

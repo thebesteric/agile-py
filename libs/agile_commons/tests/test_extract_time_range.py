@@ -1,7 +1,7 @@
 """
-测试 extract_chinese_time_range_v2.py 的单元测试
+测试 extract_time_range.py 的单元测试
 
-测试 V2 版本的时间范围提取功能，包括：
+测试时间范围提取功能，包括：
 1. 中文时间表达式解析
 2. 英文时间表达式解析
 3. 槽位组合功能
@@ -11,16 +11,16 @@
 import datetime
 import unittest
 
-from libs.agile_commons.src.utils.extract_chinese_time_range_v2 import (
-    TimeRangeExtractorV2,
-    extract_chinese_time_range_v2,
+from libs.agile_commons.src.utils.extract_time_range import (
+    TimeRangeExtractor,
     TimeSlot,
     SlotType,
     OffsetType,
     ChineseSlotParser,
     EnglishSlotParser,
     TimeSlotCombiner,
-    Language
+    Language,
+    extract_time_range,
 )
 
 
@@ -76,7 +76,7 @@ class TestChineseSlotParser(unittest.TestCase):
         self.assertEqual(self.parser.parse_number('5'), 5)
         self.assertEqual(self.parser.parse_number('五'), 5)
         self.assertEqual(self.parser.parse_number('十二'), 12)
-        self.assertEqual(self.parser.parse_number('二十三'), 23)  # 支持复杂数字
+        self.assertEqual(self.parser.parse_number('二十三'), 23)
 
     def test_parse_relative_day(self):
         results = self.parser.parse('昨天我去了北京')
@@ -118,7 +118,7 @@ class TestExtractChineseTimeRangeV2(unittest.TestCase):
 
     def setUp(self):
         self.curr = datetime.datetime(2026, 2, 12, 11, 30)
-        self.extractor = TimeRangeExtractorV2(language='zh')
+        self.extractor = TimeRangeExtractor(language='zh')
 
     def _assert_cases(self, cases):
         for text, expected in cases:
@@ -143,7 +143,8 @@ class TestExtractChineseTimeRangeV2(unittest.TestCase):
         cases = [
             ("下周五记得提醒我去出差。", ['2026-02-20 00:00:00', '2026-02-20 23:59:59']),
             ("本周五公司团建。", ['2026-02-13 00:00:00', '2026-02-13 23:59:59']),
-            ("礼拜四有空，来找我。", ['2026-02-12 00:00:00', '2026-02-12 23:59:59']),
+            ("今天有空，来找我。", ['2026-02-12 00:00:00', '2026-02-12 23:59:59']),
+            ("下个星期，一起去钓鱼。", ['2026-02-16 00:00:00', '2026-02-22 23:59:59']),
         ]
         self._assert_cases(cases)
 
@@ -175,7 +176,7 @@ class TestExtractEnglishTimeRangeV2(unittest.TestCase):
 
     def setUp(self):
         self.curr = datetime.datetime(2026, 2, 12, 11, 30)
-        self.extractor = TimeRangeExtractorV2(language='en')
+        self.extractor = TimeRangeExtractor(language='en')
 
     def test_relative_dates(self):
         """测试英文相对日期"""
@@ -200,14 +201,13 @@ class TestExtractFunction(unittest.TestCase):
         self.curr = datetime.datetime(2026, 2, 12, 11, 30)
 
     def test_chinese(self):
-        result = extract_chinese_time_range_v2("昨天", self.curr, language='zh')
+        result = extract_time_range("昨天", self.curr, language='zh')
         self.assertEqual(result, ['2026-02-11 00:00:00', '2026-02-11 23:59:59'])
 
     def test_english(self):
-        result = extract_chinese_time_range_v2("yesterday", self.curr, language='en')
+        result = extract_time_range("yesterday", self.curr, language='en')
         self.assertEqual(result, ['2026-02-11 00:00:00', '2026-02-11 23:59:59'])
 
 
 if __name__ == "__main__":
     unittest.main()
-
