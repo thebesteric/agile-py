@@ -60,7 +60,7 @@ class R(BaseModel, Generic[T]):
     http_status: Optional[HTTPStatus] = Field(default=None, description="HTTP 状态码")
     succeed: bool = Field(default=False, description="是否成功")
     track_id: Optional[str] = Field(default=None, description="追踪 ID")
-    datetime_format: str = Field(default=DEFAULT_DATETIME_FORMAT, description="datetime 序列化格式")
+    datetime_format: str = Field(default=DEFAULT_DATETIME_FORMAT, description="datetime 序列化格式", exclude=True)
 
     @field_serializer("data")
     def _serialize_data(self, data: Optional[T]) -> Optional[T]:

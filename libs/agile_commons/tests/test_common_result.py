@@ -1,7 +1,7 @@
 import unittest
 from http import HTTPStatus
 
-from libs.agile_commons.src.web.common_result import R, StatusWritableResponse
+from libs.agile_commons.src.web.common_result import StatusWritableResponse, R
 
 
 class DummyResponse(StatusWritableResponse):
@@ -93,6 +93,7 @@ class TestCommonResult(unittest.TestCase):
     def test_model_dump_structure(self):
         r = R.success(data={"name": "world"}).set_track_id("tid-1")
         dumped = r.model_dump()
+        assert dumped["track_id"] == "tid-1"
         assert dumped["succeed"] is True
         assert dumped["code"] == HTTPStatus.OK.value
         assert dumped["message"] == HTTPStatus.OK.phrase
