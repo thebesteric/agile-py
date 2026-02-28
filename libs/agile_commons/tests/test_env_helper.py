@@ -1153,6 +1153,16 @@ class TestEnvReaderEdgeCases(unittest.TestCase):
         result = self.env_helper.get('UNICODE', var_type=str)
         self.assertEqual(result, '你好世界 🌍')
 
+class TestEnvReaderEnvMode(unittest.TestCase):
+    """测试环境模式相关功能"""
+
+    def setUp(self):
+        self.env_helper = EnvHelper(env_file_path=".env.dev", env_mode="dev")
+
+    def test_env_mode(self):
+        self.assertEqual(self.env_helper.env_mode, "dev")
+
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,6 +6,10 @@ from typing import Any, Union, Type
 
 import dotenv
 
+from libs.agile_commons.src.utils.log_helper import LogHelper
+
+logger = LogHelper.get_logger()
+
 # 支持的变量类型（类型对象而非值）
 VarType = Union[
     Type[str], Type[bool], Type[int], Type[float], Type[list], Type[dict], Type[tuple], Type[set], Type[datetime.datetime], Type[datetime.date], Type[
@@ -20,13 +24,41 @@ class EnvHelper:
     ACCEPT_DATE_FORMATS = ["%Y-%m-%d", "%Y/%m/%d"]
     ACCEPT_TIME_FORMATS = ["%H:%M:%S", "%H:%M"]
 
-    def __init__(self, env_file_path: str | Path = None, override: bool = False):
+    def __init__(self, env_file_path: str | Path = None, override: bool = False, env_mode: str = None):
         """
         初始化环境变量读取器
         :param env_file_path: 环境变量文件路径
         :param override: 是否覆盖系统环境变量
         """
-        dotenv.load_dotenv(dotenv_path=env_file_path, override=override)
+        self.env_mode = env_mode.strip().lower() if env_mode else os.getenv("ENV_MODE") or os.getenv("env_mode")
+        self._load_env_files(env_file_path, override)
+
+    def _load_env_files(self, env_file_path: str | Path = None, override: bool = False):
+        """
+        加载环境文件（优先级：环境专属文件 > 通用 .env 文件）
+        :param env_file_path: 环境变量文件路径
+        :param override: 是否覆盖系统环境变量
+        """
+        env_files: list[Path] = []
+        if env_file_path:
+            # 判断 env_file_path 是否是 .env 文件
+            if not str(env_file_path).endswith(".env"):
+                # 添加到环境文件列表中，作为主环境文件加载
+                env_files.append(env_file_path if isinstance(env_file_path, Path) else Path(env_file_path))
+                # 如果指定了 ENV_MODE，但 env_file_path 不符合 .env.{ENV_MODE} 格式，发出警告提示用户
+                if self.env_mode and not str(env_file_path).endswith(self.env_mode):
+                    logger.warning(f"Specified environment file: {env_file_path}, ignoring ENV_MODE {self.env_mode} for loading additional")
+        # 根据 ENV_MODE 添加环境专属文件和通用 .env 文件到加载列表，作为次环境文件加载
+        env_files.append(Path(f".env.{self.env_mode}" if self.env_mode else ".env"))
+
+        # 按优先级加载环境文件，找到第一个存在的文件后停止加载
+        for env_file in env_files:
+            if env_file.exists():
+                dotenv.load_dotenv(dotenv_path=env_file, override=override)
+                logger.info(f"Successfully loaded environment file: {env_file}")
+                return
+
+        logger.warning(f"Could not find any environment file")
 
     def set(self, key: str, value: Any) -> None:
         """
