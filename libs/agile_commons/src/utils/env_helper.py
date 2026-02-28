@@ -6,7 +6,7 @@ from typing import Any, Union, Type
 
 import dotenv
 
-from libs.agile_commons.src.utils.log_helper import LogHelper
+from .log_helper import LogHelper
 
 logger = LogHelper.get_logger()
 
