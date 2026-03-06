@@ -41,8 +41,8 @@ class MilvusRetriever(BaseRetriever):
         # 调用 Milvus 搜索
         logger.info(f"Starting sync search in collection {self.collection_name} with query: {query}")
         search_results = self.milvus_manager.sync_search(
-            collection_name=self.collection_name,
             query=query,
+            collection_name=self.collection_name,
             top_k=self.top_k
         )
 

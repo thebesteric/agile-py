@@ -130,10 +130,11 @@ class MilvusManager:
             uri: str,
             token: str,
             embedding_model: BaseEmbedModel,
-            default_collection_name: str = None,
             primary_field: str = "id",
             text_field: str = "text",
             vector_field: str = "vector",
+            default_collection_name: str = None,
+            default_field_schemas: List[FieldSchema] = None,
             index_type: MilvusIndexType = MilvusIndexType.IVF_FLAT,
             metric_type="L2",
             params_nlist: int = 128,
@@ -156,8 +157,18 @@ class MilvusManager:
         :param vector_dim: 向量维度
         :param search_timeout: 搜索超时时间
         """
-        # 默认集合名称
-        self.default_collection_name = default_collection_name
+
+        # 参数验证
+        if not uri or not uri.strip():
+            raise ValueError("URI cannot be empty")
+        if not token or not token.strip():
+            raise ValueError("Token cannot be empty")
+        if vector_dim <= 0:
+            raise ValueError("vector_dim must be positive")
+        if params_nprobe > params_nlist:
+            raise ValueError("params_nprobe cannot exceed params_nlist")
+        if search_timeout <= 0:
+            raise ValueError("search_timeout must be positive")
 
         # 初始化嵌入模型
         self.embedding_model = embedding_model
@@ -196,80 +207,33 @@ class MilvusManager:
         # 初始化 Milvus 客户端 pymilvus
         self.milvus_client = MilvusClient(uri=uri, token=token)
 
-        # 建立连接
-        connections.connect(alias="default", uri=uri, token=token)
-
-    def _get_collection_name(self, collection_name: str | None = None) -> str:
-        """
-        获取集合名称，如果未提供则使用默认集合名称
-        :param collection_name: 集合名称
-        :return: 集合名称
-        """
-        collection_name = collection_name or self.default_collection_name
-        if not (collection_name and collection_name.strip()):
-            raise ValueError("Collection name must be provided either as an argument or set as default_collection_name")
-        return collection_name.strip()
-
-    def _create_collection_schema(self, fields: List[FieldSchema] = None) -> CollectionSchema:
-        """
-        创建集合模式
-        :return: CollectionSchema 对象
-        """
-        # 定义字段
-        fields = [
+        # 默认集合名称
+        self.default_collection_name = default_collection_name
+        self.default_field_schemas = [
             FieldSchema(name=self.primary_field, dtype=DataType.VARCHAR, is_primary=True, max_length=65535),
             FieldSchema(name=self.text_field, dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name=self.vector_field, dtype=DataType.FLOAT_VECTOR, dim=self.vector_dim),
             FieldSchema(name="metadata", dtype=DataType.JSON),
-        ] if not fields else fields
+        ] if not default_field_schemas else default_field_schemas
 
-        # 创建集合模式
-        schema = CollectionSchema(
-            fields=fields,
-            description="Milvus collection for document storage and similarity search"
-        )
-        return schema
+        # 建立连接
+        connections.connect(alias="default", uri=uri, token=token)
 
-    def _ensure_collection_exists(self, collection_name: str | None = None):
-        """
-        确保集合存在，如果不存在则创建
-        :param collection_name: 集合名称
-        :return:
-        """
-        # 使用缓存避免重复检查
-        collection_name = self._get_collection_name(collection_name)
-        if collection_name in self._initialized_collections:
-            return
-
-        if not utility.has_collection(collection_name):
-            # 创建集合
-            schema = self._create_collection_schema()
-            collection = Collection(
-                name=collection_name,
-                schema=schema
-            )
-            # 创建索引
-            collection.create_index(
-                field_name=self.vector_field,
-                index_params=self.index_params
-            )
-            logger.info(f"Created new collection: {collection_name}")
-
-        # 标记为已初始化
-        self._initialized_collections.add(collection_name)
-
-    async def ensure_collection_ready(self, collection_name: str | None = None):
+    async def ensure_collection_ready(self,
+                                      collection_name: str = None,
+                                      field_schemas: List[FieldSchema] = None):
         """
         预初始化 collection：确保存在、已加载、已就绪
         应在应用启动时调用，而不是在每次查询时调用
         :param collection_name: 集合名称
+        :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
         :return:
         """
         try:
             # 使用默认集合名称
             collection_name = self._get_collection_name(collection_name)
             # 确保集合存在
-            self._ensure_collection_exists(collection_name)
+            self._ensure_collection_exists(collection_name=collection_name, field_schemas=field_schemas)
 
             # 获取集合对象并加载到内存
             collection = Collection(name=collection_name)
@@ -283,30 +247,9 @@ class MilvusManager:
             logger.error(f"Failed to ensure collection '{collection_name}' ready: {str(e)}")
             raise e
 
-    def get_collection(self, collection_name: str) -> Collection:
-        """
-        获取 collection 对象
-        :param collection_name: 集合名称
-        :return: Collection 对象
-        """
-        # 如果已初始化，直接获取（不再检查是否存在）
-        if collection_name in self._initialized_collections:
-            collection = Collection(name=collection_name)
-            # 如果未加载，则加载（通常第一次查询时需要）
-            if collection_name not in self._loaded_collections:
-                collection.load()
-                self._loaded_collections.add(collection_name)
-            return collection
-
-        # 如果未初始化，会先创建集合（如果不存在），然后获取并加载
-        self._ensure_collection_exists(collection_name)
-        collection = Collection(name=collection_name)
-        if collection_name not in self._loaded_collections:
-            collection.load()
-            self._loaded_collections.add(collection_name)
-        return collection
-
-    async def insert_documents(self, documents: List[Document], collection_name: str | None = None):
+    async def insert_documents(self,
+                               documents: List[Document],
+                               collection_name: str = None):
         """
         插入文档到集合
         :param collection_name: 集合名称
@@ -316,10 +259,11 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
-            # 确保集合存在（数据导入时可能需要创建）
-            self._ensure_collection_exists(collection_name)
             # 获取集合对象
-            collection = self.get_collection(collection_name)
+            collection = await self.get_collection(collection_name)
+            # 如果集合不存在，抛出异常
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist. Please ensure it is created and ready before inserting documents.")
 
             # 准备数据
             doc_ids = [str(uuid.uuid4()) for _ in documents]
@@ -329,12 +273,13 @@ class MilvusManager:
             # 生成嵌入向量
             embeddings = await self.embedding_model.embed_batch(texts)
 
-            # 准备插入数据
+            # 准备插入数据（顺序必须与 schema 定义一致）
+            # Schema 顺序: primary_field -> text_field -> vector_field -> metadata
             entities = [
-                doc_ids,
-                embeddings,
-                texts,
-                metadatas
+                doc_ids,  # primary_field
+                texts,  # text_field
+                embeddings,  # vector_field
+                metadatas  # metadata
             ]
 
             # 插入数据
@@ -346,11 +291,20 @@ class MilvusManager:
             logger.error(f"Failed to insert documents into Milvus: {str(e)}")
             raise e
 
-    async def async_search(self, query: str, collection_name: str | None = None, top_k: int = 5, timeout: float = None) -> list[Document]:
+    async def search(self,
+                     query: str,
+                     *,
+                     collection_name: str = None,
+                     filter_expr: str = None,
+                     output_fields: List[str] = None,
+                     top_k: int = 5,
+                     timeout: float = None) -> list[Document]:
         """
         在 Milvus 集合中进行异步相似度搜索
-        :param collection_name: 集合名称
         :param query: 查询语句
+        :param collection_name: 集合名称
+        :param filter_expr: 过滤表达式
+        :param output_fields: 要返回的字段列表，如果为 None 则返回所有字段
         :param top_k: 返回数量
         :param timeout: 超时时间（秒）
         :return: 搜索结果
@@ -358,12 +312,17 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
-            # 设置超时时间
-            timeout = timeout or self.search_timeout
+
             # 获取集合对象
-            collection = self.get_collection(collection_name)
+            collection = await self.get_collection(collection_name)
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist. Please ensure it is created and ready before performing search.")
+
             # 生成查询嵌入向量
             query_embedding = await self.embedding_model.embed(query)
+
+            # 设置超时时间
+            timeout = timeout or self.search_timeout
 
             def _do_search():
                 """同步搜索函数，在线程池中执行"""
@@ -372,7 +331,8 @@ class MilvusManager:
                     anns_field=self.vector_field,
                     param=self.search_params,
                     limit=top_k,
-                    output_fields=["*"],
+                    expr=filter_expr,
+                    output_fields=output_fields or ["*"],
                     timeout=timeout
                 )
 
@@ -393,44 +353,342 @@ class MilvusManager:
             logger.error(f"Failed to perform async search in Milvus: {str(e)}", exc_info=True)
             return []
 
-    def sync_search(self, query: str, collection_name: str | None = None, top_k: int = 5, timeout: float = None) -> list[Document]:
+    async def get_collection(self, collection_name: str) -> Collection | None:
         """
-        在 Milvus 集合中进行同步相似度搜索
+        获取 collection 对象
         :param collection_name: 集合名称
-        :param query: 查询语句
-        :param top_k: 返回数量
-        :param timeout: 超时时间（秒）
-        :return: 搜索结果
+        :return: Collection 对象
+        """
+        # 如果已初始化，直接获取（不再检查是否存在）
+        if collection_name in self._initialized_collections:
+            collection = Collection(name=collection_name)
+            # 如果未加载，则加载（通常第一次查询时需要）
+            if collection_name not in self._loaded_collections:
+                collection.load()
+                self._loaded_collections.add(collection_name)
+            return collection
+        # 如果未初始化，返回 None
+        return None
+
+    async def create_collection(self,
+                                collection_name: str,
+                                *,
+                                collection_desc: str = None,
+                                field_schemas: List[FieldSchema] = None):
+        """
+        创建集合
+        :param collection_name: 集合名称
+        :param collection_desc: 集合描述
+        :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :return:
+        """
+        try:
+            if utility.has_collection(collection_name):
+                logger.warning(f"Collection {collection_name} already exists, cannot create.")
+                return
+
+            # 创建集合
+            self._ensure_collection_exists(
+                collection_name=collection_name,
+                collection_desc=collection_desc,
+                field_schemas=field_schemas
+            )
+        except Exception as e:
+            logger.error(f"Failed to create collection {collection_name}: {str(e)}")
+            raise e
+
+    async def delete_collection(self, collection_name: str):
+        """
+        删除集合
+        :param collection_name: 集合名称
+        :return:
+        """
+        try:
+            if utility.has_collection(collection_name):
+                utility.drop_collection(collection_name)
+                # 从缓存中移除
+                self._initialized_collections.discard(collection_name)
+                self._loaded_collections.discard(collection_name)
+                logger.info(f"Successfully deleted collection: {collection_name}")
+            else:
+                logger.warning(f"Collection {collection_name} does not exist, cannot delete.")
+        except Exception as e:
+            logger.error(f"Failed to delete collection {collection_name}: {str(e)}")
+            raise e
+
+    async def get_collection_count(self, collection_name: str = None) -> int:
+        """
+        获取集合中的元素数量
+        :param collection_name: 集合名称，如果为 None 则使用默认集合
+        :return: 集合中的元素数量
         """
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
-            # 设置超时时间
-            timeout = timeout or self.search_timeout
             # 获取集合对象
-            collection = self.get_collection(collection_name)
-            # 生成查询嵌入向量
-            query_embedding = self.embedding_model.embed(query)
+            collection = await self.get_collection(collection_name)
+            # 获取元素数量
+            count = collection.num_entities
+            logger.info(f"Collection '{collection_name}' has {count} entities")
+            return count
+        except Exception as e:
+            logger.error(f"Failed to get count for collection {collection_name}: {str(e)}")
+            raise e
 
-            # 执行搜索
-            results = collection.search(
-                data=[query_embedding],
-                anns_field=self.vector_field,
-                param=self.search_params,
-                limit=top_k,
-                output_fields=["*"],
-                timeout=timeout
+    async def delete_by_ids(self,
+                            ids: List[str],
+                            collection_name: str = None):
+        """
+        根据主键 ID 删除文档
+        :param ids: 要删除的文档 ID 列表
+        :param collection_name: 集合名称
+        :return:
+        """
+        try:
+            if not ids:
+                logger.warning("No IDs provided for deletion")
+                return
+
+            # 获取集合名称
+            collection_name = self._get_collection_name(collection_name)
+            # 获取集合对象
+            collection = await self.get_collection(collection_name)
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist.")
+
+            # 构建删除表达式
+            ids_str = ", ".join([f"'{id_}'" for id_ in ids])
+            expr = f"{self.primary_field} in [{ids_str}]"
+
+            # 执行删除
+            collection.delete(expr)
+            collection.flush()
+
+            logger.info(f"Successfully deleted {len(ids)} documents from collection {collection_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete documents: {str(e)}")
+            raise e
+
+    async def get_by_ids(self,
+                         ids: List[str],
+                         collection_name: str = None,
+                         output_fields: List[str] = None, ) -> List[Document]:
+        """
+        根据主键 ID 批量查询文档
+        :param ids: 要查询的文档 ID 列表
+        :param collection_name: 集合名称
+        :param output_fields: 要返回的字段列表，如果为 None 则返回所有字段
+        :return: 文档列表
+        """
+        try:
+            if not ids:
+                return []
+
+            # 获取集合名称
+            collection_name = self._get_collection_name(collection_name)
+            # 获取集合对象
+            collection = await self.get_collection(collection_name)
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist.")
+
+            # 构建查询表达式
+            ids_str = ", ".join([f"'{id_}'" for id_ in ids])
+            expr = f"{self.primary_field} in [{ids_str}]"
+
+            # 执行查询
+            results = collection.query(
+                expr=expr,
+                output_fields=output_fields or ["*"]
             )
 
-            # 处理搜索结果
-            documents = self._package_documents(results)
+            # 转换为 Document 对象
+            documents = []
+            for result in results:
+                doc = Document(
+                    id=result.get(self.primary_field),
+                    page_content=result.get(self.text_field, ""),
+                    metadata={
+                        self.primary_field: result.get(self.primary_field),
+                        **result.get("metadata", {})
+                    }
+                )
+                documents.append(doc)
 
-            logger.info(f"Sync search completed, found {len(documents)} results")
+            logger.info(f"Retrieved {len(documents)} documents by IDs")
             return documents
 
         except Exception as e:
-            logger.error(f"Failed to perform sync search in Milvus: {str(e)}")
+            logger.error(f"Failed to get documents by IDs: {str(e)}")
             return []
+
+    async def clear_collection(self, collection_name: str):
+        """
+        清空集合中的所有数据，但保留集合结构
+        :param collection_name: 集合名称
+        :return:
+        """
+        try:
+            # 获取集合名称
+            collection_name = self._get_collection_name(collection_name)
+            # 获取集合对象
+            collection = await self.get_collection(collection_name)
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist.")
+
+            # 删除所有数据（使用空过滤条件删除所有记录）
+            collection.delete(expr=f"{self.primary_field} != ''")
+            collection.flush()
+
+            logger.info(f"Successfully cleared all data from collection {collection_name}")
+        except Exception as e:
+            logger.error(f"Failed to clear collection {collection_name}: {str(e)}")
+            raise e
+
+    async def get_collection_stats(self, collection_name: str = None) -> dict:
+        """
+        获取集合详细统计信息
+        :param collection_name: 集合名称
+        :return: 统计信息字典
+        """
+        try:
+            # 获取集合名称
+            collection_name = self._get_collection_name(collection_name)
+            # 获取集合对象
+            collection = await self.get_collection(collection_name)
+            if not collection:
+                raise ValueError(f"Collection '{collection_name}' does not exist.")
+
+            # 获取统计信息
+            stats = {
+                "name": collection_name,
+                "num_entities": collection.num_entities,
+                "num_shards": collection.num_shards,
+                "is_empty": collection.is_empty,
+                "schema": {
+                    "fields": [
+                        {
+                            "name": field.name,
+                            "type": str(field.dtype),
+                            "is_primary": field.is_primary
+                        }
+                        for field in collection.schema.fields
+                    ]
+                },
+                "indexes": [
+                    {
+                        "field_name": index.field_name,
+                        "index_name": index.index_name,
+                        "params": index.params
+                    }
+                    for index in collection.indexes
+                ]
+            }
+
+            logger.info(f"Retrieved stats for collection {collection_name}")
+            return stats
+
+        except Exception as e:
+            logger.error(f"Failed to get collection stats: {str(e)}")
+            raise e
+
+    @staticmethod
+    def health_check() -> bool:
+        """
+        检查连接是否正常
+        :return: True 表示连接正常，False 表示连接异常
+        """
+        try:
+            utility.list_collections()
+            logger.debug("Milvus health check passed")
+            return True
+        except Exception as e:
+            logger.error(f"Milvus health check failed: {str(e)}")
+            return False
+
+    def close(self):
+        """
+        关闭连接并清理资源
+        """
+        try:
+            connections.disconnect(alias="default")
+            self._initialized_collections.clear()
+            self._loaded_collections.clear()
+            logger.info("Milvus connection closed and resources cleared")
+        except Exception as e:
+            logger.error(f"Failed to close Milvus connection: {str(e)}")
+
+    @staticmethod
+    async def list_collections():
+        """
+        列出所有集合
+        :return: 集合名称列表
+        """
+        try:
+            collections = utility.list_collections()
+            logger.info(f"Current collections in Milvus: {collections}")
+            return collections
+        except Exception as e:
+            logger.error(f"Failed to list collections in Milvus: {str(e)}")
+            raise e
+
+    def _get_collection_name(self, collection_name: str = None) -> str:
+        """
+        获取集合名称，如果未提供则使用默认集合名称
+        :param collection_name: 集合名称
+        :return: 集合名称
+        """
+        collection_name = collection_name or self.default_collection_name
+        if not (collection_name and collection_name.strip()):
+            raise ValueError("Collection name must be provided either as an argument or set as default_collection_name")
+        return collection_name.strip()
+
+    def _create_collection_schema(self,
+                                  collection_desc: str = None,
+                                  field_schemas: List[FieldSchema] = None) -> CollectionSchema:
+        """
+        创建集合模式
+        :param collection_desc: 集合描述
+        :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :return: CollectionSchema 对象
+        """
+        # 定义字段
+        fields = field_schemas or self.default_field_schemas
+        # 创建集合模式
+        return CollectionSchema(fields=fields, description=collection_desc)
+
+    def _ensure_collection_exists(self,
+                                  *,
+                                  collection_name: str = None,
+                                  collection_desc: str = None,
+                                  field_schemas: List[FieldSchema] = None):
+        """
+        确保集合存在，如果不存在则创建
+        :param collection_name: 集合名称
+        :param collection_desc: 集合描述
+        :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :return:
+        """
+        # 使用缓存避免重复检查
+        collection_name = self._get_collection_name(collection_name)
+        if collection_name in self._initialized_collections:
+            return
+
+        if not utility.has_collection(collection_name):
+            # 创建集合
+            schema = self._create_collection_schema(collection_desc, field_schemas)
+            collection = Collection(
+                name=collection_name,
+                schema=schema
+            )
+            # 创建索引
+            collection.create_index(
+                field_name=self.vector_field,
+                index_params=self.index_params
+            )
+            logger.info(f"Created new collection: {collection_name}")
+
+        # 标记为已初始化
+        self._initialized_collections.add(collection_name)
 
     def _package_documents(self, results: SearchResult) -> list[Document]:
         """
@@ -454,54 +712,10 @@ class MilvusManager:
                 documents.append(doc)
         return documents
 
-    async def delete_collection(self, collection_name: str):
-        """
-        删除集合
-        :param collection_name: 集合名称
-        :return:
-        """
-        try:
-            if utility.has_collection(collection_name):
-                utility.drop_collection(collection_name)
-                # 从缓存中移除
-                self._initialized_collections.discard(collection_name)
-                self._loaded_collections.discard(collection_name)
-                logger.info(f"Successfully deleted collection: {collection_name}")
-            else:
-                logger.warning(f"Collection {collection_name} does not exist, cannot delete.")
-        except Exception as e:
-            logger.error(f"Failed to delete collection {collection_name}: {str(e)}")
-            raise e
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        return self
 
-    def get_collection_count(self, collection_name: str | None = None) -> int:
-        """
-        获取集合中的元素数量
-        :param collection_name: 集合名称，如果为 None 则使用默认集合
-        :return: 集合中的元素数量
-        """
-        try:
-            # 获取集合名称
-            collection_name = self._get_collection_name(collection_name)
-            # 获取集合对象
-            collection = self.get_collection(collection_name)
-            # 获取元素数量
-            count = collection.num_entities
-            logger.info(f"Collection '{collection_name}' has {count} entities")
-            return count
-        except Exception as e:
-            logger.error(f"Failed to get count for collection {collection_name}: {str(e)}")
-            raise e
-
-    @staticmethod
-    async def list_collections():
-        """
-        列出所有集合
-        :return: 集合名称列表
-        """
-        try:
-            collections = utility.list_collections()
-            logger.info(f"Current collections in Milvus: {collections}")
-            return collections
-        except Exception as e:
-            logger.error(f"Failed to list collections in Milvus: {str(e)}")
-            raise e
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器退出"""
+        self.close()
