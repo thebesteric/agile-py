@@ -340,7 +340,7 @@ class MilvusManager:
             results = await asyncio.to_thread(_do_search)
 
             # 处理搜索结果
-            documents = self._package_documents(results)
+            documents = self.trans_to_documents(results)
 
             logger.info(f"Async search completed, found {len(documents)} results")
             return documents
@@ -654,7 +654,10 @@ class MilvusManager:
         # 定义字段
         fields = field_schemas or self.default_field_schemas
         # 创建集合模式
-        return CollectionSchema(fields=fields, description=collection_desc)
+        return CollectionSchema(
+            fields=fields,
+            description=collection_desc or ""
+        )
 
     def _ensure_collection_exists(self,
                                   *,
@@ -690,7 +693,7 @@ class MilvusManager:
         # 标记为已初始化
         self._initialized_collections.add(collection_name)
 
-    def _package_documents(self, results: SearchResult) -> list[Document]:
+    def trans_to_documents(self, results: SearchResult) -> list[Document]:
         """
         将 Milvus 搜索结果包装为 Document 对象
         :param results: 搜索结果
