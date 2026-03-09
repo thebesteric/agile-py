@@ -163,6 +163,7 @@ cython_debug/
 .idea/
 
 # Project
+.DS_Store
 .jbeval/
 logs/
 .dist/
