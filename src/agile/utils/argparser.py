@@ -85,15 +85,3 @@ class Argparser:
                 self.args[arg_name_with_prefix].current_val = param_value
         # 返回所有 Argument 对象的列表
         return list(self.args.values())
-
-
-if __name__ == '__main__':
-    parser = Argparser("参数解析工具")
-    parser.add_args([
-        Argument(arg_name="path", arg_type=str, required=True, help="文件路径"),
-        Argument(arg_name="count", arg_type=int, required=False, default_val=1, help="计数"),
-    ])
-
-    args = parser.list_args(argv=["--path", "/tmp/demo"])
-    for arg in args:
-        print(f"{arg.arg_name_with_prefix}: {arg.current_val}")
