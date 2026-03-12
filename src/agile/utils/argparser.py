@@ -82,6 +82,8 @@ class Argparser:
             arg_name_with_prefix = f"{item[param_name]}{param_name}"
             # 找到对应的 Argument 对象，并赋值 current_val
             if arg_name_with_prefix in self.args:
-                self.args[arg_name_with_prefix].current_val = param_value
+                arg = self.args[arg_name_with_prefix]
+                # 如果存在命令行参数值，则使用它；否则使用默认值
+                arg.current_val = param_value or arg.default_val
         # 返回所有 Argument 对象的列表
         return list(self.args.values())
