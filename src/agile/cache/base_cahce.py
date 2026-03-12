@@ -75,3 +75,23 @@ class BaseCache(ABC):
         :return:
         """
         raise NotImplementedError()
+
+    def get_or_set(
+            self,
+            key: str,
+            value: Any,
+            ttl: Optional[Union[int, float]] = None,
+            time_unit: TimeUnit = TimeUnit.SECONDS,
+    ) -> Any:
+        """
+        如果不存在，则添加到缓存中
+        :param key: 键
+        :param value: 值
+        :param ttl: 时间
+        :param time_unit: 时间单位
+        """
+        result = self.get(key, default=None)
+        if result is None:
+            self.set(key, value, ttl=ttl, time_unit=time_unit)
+            return value
+        return result
