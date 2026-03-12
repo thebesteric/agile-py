@@ -8,6 +8,7 @@ class TestArgparser(unittest.TestCase):
     def setUp(self):
         self.parser = Argparser("参数解析工具")
 
+
     def test_list_args(self):
         self.parser.list_args(argv=[])
 
@@ -22,6 +23,29 @@ class TestArgparser(unittest.TestCase):
 
         self.assertEqual(args_by_name["path"].current_val, "/tmp/demo")
         self.assertEqual(args_by_name["count"].current_val, 3)
+
+    def test_get_arg(self):
+        self.parser.add_args([
+            Argument(arg_name="path", arg_type=str, required=True),
+            Argument(arg_name="count", arg_type=int, required=False),
+        ])
+
+        arg = self.parser.get_arg("--count", argv=["--path", "/tmp/demo", "--count", "3"])
+
+        self.assertIsNotNone(arg)
+        self.assertEqual(arg.arg_name, "count")
+        self.assertEqual(arg.arg_name_with_prefix, "--count")
+        self.assertEqual(arg.current_val, 3)
+
+    def test_get_arg_returns_none_for_missing_name(self):
+        self.parser.add_args([
+            Argument(arg_name="path", arg_type=str, required=True),
+            Argument(arg_name="count", arg_type=int, required=False),
+        ])
+
+        arg = self.parser.get_arg("--missing", argv=["--path", "/tmp/demo", "--count", "3"])
+
+        self.assertIsNone(arg)
 
 
 if __name__ == '__main__':
