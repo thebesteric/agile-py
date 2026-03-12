@@ -66,14 +66,14 @@ class Argparser:
         """
         解析参数
         """
-        return self.parser.parse_args(argv) if argv is not None else self.parser.parse_args()
+        return self.parser.parse_args(args=argv)
 
     def list_args(self, argv: list[str] | None = None) -> list[Argument]:
         """
         列出所有参数
         :param argv: 命令行参数
         """
-        namespace = self.parse(argv) if argv is not None else self.parse()
+        namespace = self.parse(argv)
         args_dict = vars(namespace)
         for param_name, param_value in args_dict.items():
             item = next((item for item in self.args_with_prefix if param_name in item), None)
@@ -85,3 +85,15 @@ class Argparser:
                 self.args[arg_name_with_prefix].current_val = param_value
         # 返回所有 Argument 对象的列表
         return list(self.args.values())
+
+
+if __name__ == '__main__':
+    parser = Argparser("参数解析工具")
+    parser.add_args([
+        Argument(arg_name="path", arg_type=str, required=True, help="文件路径"),
+        Argument(arg_name="count", arg_type=int, required=False, default_val=1, help="计数"),
+    ])
+
+    args = parser.list_args(argv=["--path", "/tmp/demo"])
+    for arg in args:
+        print(f"{arg.arg_name_with_prefix}: {arg.current_val}")
