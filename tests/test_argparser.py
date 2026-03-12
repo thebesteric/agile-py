@@ -47,6 +47,16 @@ class TestArgparser(unittest.TestCase):
 
         self.assertIsNone(arg)
 
+    def test_get_arg_with_default(self):
+        self.parser.add_args([
+            Argument(arg_name="path", arg_type=str, required=True),
+            Argument(arg_name="count", arg_type=int, default_val=10, required=False),
+        ])
+
+        arg = self.parser.get_arg("--count", argv=["--path", "/tmp/demo"])
+
+        self.assertEqual(arg.current_val, 10)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
