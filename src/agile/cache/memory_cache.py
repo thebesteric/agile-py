@@ -4,9 +4,8 @@ import time
 
 from cachetools import TTLCache, LRUCache
 
-from .base_cahce import BaseCache
-from ..utils.log_helper import LogHelper
-from ..utils.time_unit import TimeUnit
+from agile.cache import BaseCache
+from agile.utils import LogHelper, TimeUnit
 
 logger = LogHelper.get_logger()
 
@@ -105,3 +104,11 @@ class MemoryCache(BaseCache):
         """
         with self._lock:
             self._cache.clear()
+
+    def size(self) -> int:
+        """
+        获取当前缓存中的项数
+        :return:
+        """
+        with self._lock:
+            return len(self._cache)

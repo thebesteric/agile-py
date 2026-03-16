@@ -76,6 +76,14 @@ class BaseCache(ABC):
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def size(self) -> int:
+        """
+        获取缓存中元素的数量
+        :return:
+        """
+        raise NotImplementedError()
+
     def get_or_set(
             self,
             key: str,
