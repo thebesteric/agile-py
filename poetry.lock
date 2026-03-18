@@ -1559,14 +1559,14 @@ windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
 name = "pymilvus"
-version = "2.6.9"
+version = "2.6.10"
 description = "Python Sdk for Milvus"
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
 files = [
-    {file = "pymilvus-2.6.9-py3-none-any.whl", hash = "sha256:3e14e8072f6429dcd79d52a24dc021c594cb80841ddd76cb974bc539d1f4cdda"},
-    {file = "pymilvus-2.6.9.tar.gz", hash = "sha256:c53a3d84ff15814e251be13edda70a98a1c8a6090d7597a908387cbb94a9504a"},
+    {file = "pymilvus-2.6.10-py3-none-any.whl", hash = "sha256:a048b6f3ebad93742bca559beabf44fe578f0983555a109c4436b5fb2c1dbd40"},
+    {file = "pymilvus-2.6.10.tar.gz", hash = "sha256:58a44ee0f1dddd7727ae830ef25325872d8946f029d801a37105164e6699f1b8"},
 ]
 
 [package.dependencies]
@@ -1576,6 +1576,7 @@ orjson = ">=3.10.15"
 pandas = ">=1.2.4"
 protobuf = ">=5.27.2"
 python-dotenv = ">=1.0.1,<2.0.0"
+requests = ">=2.20.0"
 setuptools = ">69"
 
 [package.extras]
@@ -2342,4 +2343,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0.0"
-content-hash = "bdc8245708b9dfe94f055717b40b75db991c5c6d912e4544bd962dc0d2bc409d"
+content-hash = "01426afb255a3a2fa5e74a69e8845b3a55c119cf18fe741b9c81f76b8faea373"
