@@ -90,6 +90,9 @@ class BaseCache(ABC):
             value: Union[Any, Callable[[], Any]],
             ttl: Optional[Union[int, float]] = None,
             time_unit: TimeUnit = TimeUnit.SECONDS,
+            on_get: Optional[Callable[[str, Any], None]] = None,
+            on_set: Optional[Callable[[str, Any], None]] = None,
+            emit_get_after_set: bool = False,
     ) -> Any:
         """
         如果不存在，则添加到缓存中。
@@ -99,10 +102,19 @@ class BaseCache(ABC):
         :param value: 值
         :param ttl: 时间
         :param time_unit: 时间单位
+        :param on_get: 命中缓存时的回调，参数为 (key, cached_value)
+        :param on_set: 首次写入缓存后的回调，参数为 (key, resolved_value)
+        :param emit_get_after_set: miss 后是否在 on_set 之后额外触发一次 on_get
         """
         result = self.get(key, default=None)
         if result is None:
             resolved_value = value() if callable(value) else value
             self.set(key, resolved_value, ttl=ttl, time_unit=time_unit)
+            if on_set is not None:
+                on_set(key, resolved_value)
+            if emit_get_after_set and on_get is not None:
+                on_get(key, resolved_value)
             return resolved_value
+        if on_get is not None:
+            on_get(key, result)
         return result

@@ -1,21 +1,28 @@
 import threading
 import unittest
 
+from numpy.ma.core import outer
+
 from agile.utils import singleton
 
+@singleton
+class Service:
+    def __init__(self):
+        print("Service.__init__")
+
+outer_service = Service()
 
 class TestSingleton(unittest.TestCase):
 
     def test_returns_same_instance(self):
         """验证同一个单例类重复实例化时返回同一对象。"""
-        @singleton
-        class Service:
-            pass
+
 
         first = Service()
         second = Service()
 
         self.assertIs(first, second)
+        self.assertIs(first, outer_service)
 
     def test_init_only_runs_once(self):
         """验证多次构造仅首次执行 __init__，后续参数不覆盖已有状态。"""
