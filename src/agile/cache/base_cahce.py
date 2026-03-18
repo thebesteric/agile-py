@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 import time
 
 from ..utils.time_unit import TimeUnit
@@ -87,12 +87,14 @@ class BaseCache(ABC):
     def get_or_set(
             self,
             key: str,
-            value: Any,
+            value: Union[Any, Callable[[], Any]],
             ttl: Optional[Union[int, float]] = None,
             time_unit: TimeUnit = TimeUnit.SECONDS,
     ) -> Any:
         """
-        如果不存在，则添加到缓存中
+        如果不存在，则添加到缓存中。
+        value 既可以是直接值，也可以是一个无参可调用对象（如 lambda），
+        在 miss 时才会被执行并写入缓存。
         :param key: 键
         :param value: 值
         :param ttl: 时间
@@ -100,6 +102,7 @@ class BaseCache(ABC):
         """
         result = self.get(key, default=None)
         if result is None:
-            self.set(key, value, ttl=ttl, time_unit=time_unit)
-            return value
+            resolved_value = value() if callable(value) else value
+            self.set(key, resolved_value, ttl=ttl, time_unit=time_unit)
+            return resolved_value
         return result
