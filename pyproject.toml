@@ -25,6 +25,8 @@ dependencies = [
     "numpy (>=2.4.3,<3.0.0)",
     "pymilvus (>=2.6.10,<3.0.0)",
     "build (>=1.4.0,<2.0.0)",
+    "jieba (>=0.42.1,<0.43.0)",
+    "whoosh (>=2.7.4,<3.0.0)",
 ]
 
 [[project.authors]]
