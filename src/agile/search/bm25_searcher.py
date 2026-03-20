@@ -91,7 +91,7 @@ class BM25Searcher:
             })
         writer.commit()
 
-    def search(self, query, *, top_k=20, group: type[GroupNode] = OrGroup, docs=None):
+    def search(self, query, *, top_k=20, group: type[GroupNode] = OrGroup, docs=None) -> list[str]:
         """
         检索
         :param query: 查询语句
