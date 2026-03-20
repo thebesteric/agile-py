@@ -107,6 +107,16 @@ class TestTiming(unittest.TestCase):
         self.assertEqual("real-done", result)
         self.assertGreaterEqual(elapsed, 1.5)
 
+    def test_inline_func(self):
+
+        def inline_func(foo: str):
+            time.sleep(2)
+            print(f"==> {foo} 内联函数执行完成")
+            return "inline_func"
+
+        decorated = timing(inline_func)
+        print(decorated("test"))
+
 
 if __name__ == '__main__':
     unittest.main()
