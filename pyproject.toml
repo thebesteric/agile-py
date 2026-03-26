@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "agile"
-version = "0.1.8"
+version = "0.1.9"
 description = "An easy-to-use general-purpose Python utility toolkits"
 readme = "README.md"
 requires-python = ">=3.12,<4.0.0"
@@ -21,10 +21,10 @@ dependencies = [
     "pyrootutils>=1.0.4,<2.0.0",
     "cachetools>=7.0.5,<8.0.0",
     "typer>=0.24.1,<0.25.0",
-    "langchain (>=1.2.11,<2.0.0)",
+    "langchain (>=1.2.13,<2.0.0)",
     "numpy (>=2.4.3,<3.0.0)",
     "pymilvus (>=2.6.10,<3.0.0)",
-    "build (>=1.4.0,<2.0.0)",
+    "build (>=1.4.2,<2.0.0)",
     "jieba (>=0.42.1,<0.43.0)",
     "whoosh (>=2.7.4,<3.0.0)",
 ]
