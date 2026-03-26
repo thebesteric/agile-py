@@ -120,3 +120,18 @@ class TestMemoryCache(unittest.TestCase):
         self.assertEqual(callback_events[2][0], "get")
         self.assertEqual(callback_events[2][1], "foo_callbacks_emit")
         self.assertIs(callback_events[2][2], foo2)
+
+    def test_items_keys_values(self):
+        self.cache.clear()
+        self.cache.set("a", 1)
+        self.cache.set("b", 2)
+        self.cache.set("c", 3)
+        # items
+        items = dict(self.cache.items())
+        self.assertEqual(items, {"a": 1, "b": 2, "c": 3})
+        # keys
+        keys = set(self.cache.keys())
+        self.assertEqual(keys, {"a", "b", "c"})
+        # values
+        values = set(self.cache.values())
+        self.assertEqual(values, {1, 2, 3})

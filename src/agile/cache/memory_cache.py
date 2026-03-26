@@ -112,3 +112,70 @@ class MemoryCache(BaseCache):
         """
         with self._lock:
             return len(self._cache)
+
+    def items(self) -> list[tuple[str, Any]]:
+        """
+        返回缓存中所有 (key, value) 对的可迭代对象
+        :return: Iterable[Tuple[str, Any]]
+        """
+        with self._lock:
+            if isinstance(self._cache, TTLCache):
+                # TTLCache 自动处理过期
+                return list(self._cache.items())
+            else:
+                # LRUCache 需手动处理过期
+                now = time.time()
+                result = []
+                keys_to_delete = []
+                for k, (v, expiry) in self._cache.items():
+                    if expiry is None or now <= expiry:
+                        result.append((k, v))
+                    else:
+                        keys_to_delete.append(k)
+                # 清理过期项
+                for k in keys_to_delete:
+                    del self._cache[k]
+                return result
+
+    def keys(self) -> list[str]:
+        """
+        返回缓存中所有 key 的可迭代对象
+        :return: Iterable[str]
+        """
+        with self._lock:
+            if isinstance(self._cache, TTLCache):
+                return list(self._cache.keys())
+            else:
+                now = time.time()
+                keys = []
+                keys_to_delete = []
+                for k, (v, expiry) in self._cache.items():
+                    if expiry is None or now <= expiry:
+                        keys.append(k)
+                    else:
+                        keys_to_delete.append(k)
+                for k in keys_to_delete:
+                    del self._cache[k]
+                return keys
+
+    def values(self) -> list[Any]:
+        """
+        返回缓存中所有 value 的可迭代对象
+        :return: Iterable[Any]
+        """
+        with self._lock:
+            if isinstance(self._cache, TTLCache):
+                return list(self._cache.values())
+            else:
+                now = time.time()
+                values = []
+                keys_to_delete = []
+                for k, (v, expiry) in self._cache.items():
+                    if expiry is None or now <= expiry:
+                        values.append(v)
+                    else:
+                        keys_to_delete.append(k)
+                for k in keys_to_delete:
+                    del self._cache[k]
+                return values
+

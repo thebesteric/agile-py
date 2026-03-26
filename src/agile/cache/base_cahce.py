@@ -84,6 +84,30 @@ class BaseCache(ABC):
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def items(self) -> list[tuple[str, Any]]:
+        """
+        返回缓存中所有 (key, value) 对的可迭代对象
+        :return: Iterable[Tuple[str, Any]]
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def keys(self) -> list[str]:
+        """
+        返回缓存中所有 key 的可迭代对象
+        :return: Iterable[str]
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def values(self) -> list[Any]:
+        """
+        返回缓存中所有 value 的可迭代对象
+        :return: Iterable[Any]
+        """
+        raise NotImplementedError()
+
     def get_or_set(
             self,
             key: str,
