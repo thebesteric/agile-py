@@ -15,5 +15,11 @@ class TestLogger(unittest.TestCase):
         self.log.error('==> error')
         self.log.critical('==> critical')
 
+    def test_title_prefix(self):
+        logger = LogHelper.get_logger(name="test.title.prefix", title="[xxx]")
+        with self.assertLogs("test.title.prefix", level="INFO") as captured:
+            logger.info("Hello World!")
+        self.assertIn("[xxx] Hello World!", captured.output[0])
+
 if __name__ == '__main__':
     unittest.main()

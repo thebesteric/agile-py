@@ -15,6 +15,19 @@ import yaml
 # pip install colorlog
 # =========================
 
+
+class _TitleLoggerAdapter(logging.LoggerAdapter):
+    """
+    为每条日志消息添加一个固定的标题
+    """
+
+    def process(self, msg, kwargs):
+        title_prefix = self.extra.get("title_prefix", "")
+        if not title_prefix:
+            return msg, kwargs
+        return f"{title_prefix} {msg}", kwargs
+
+
 class LogHelper:
     """
     日志工具类
@@ -35,7 +48,8 @@ class LogHelper:
     DEFAULT_INDICATOR = (".project-root", "setup.cfg", "setup.py", ".git", "pyproject.toml", CONFIG_FILE_NAME)
 
     @classmethod
-    def _load_config(cls, *, search_from: str | Path = None, indicator: str | Iterable[str] = None) -> tuple[Path, dict[str, Any]]:
+    def _load_config(cls, *, search_from: str | Path = None, indicator: str | Iterable[str] = None) -> tuple[
+        Path, dict[str, Any]]:
         """
         读取包内置的配置文件
         :return:
@@ -57,21 +71,31 @@ class LogHelper:
         return project_root, config
 
     @classmethod
-    def get_logger(cls, name: str | None = None, *, search_from: str | Path = None, indicator: str | Iterable[str] = None) -> logging.Logger:
+    def get_logger(
+            cls,
+            name: str | None = None,
+            *,
+            title: str | None = None,
+            search_from: str | Path = None,
+            indicator: str | Iterable[str] = None,
+    ) -> logging.Logger | logging.LoggerAdapter:
         """
         获取日志实例（单例）
         @param name: 日志实例名称
         @param config_path: 日志配置文件路径（相对于项目根目录的路径）
         @return: 日志实例
         """
-        if name in cls._instances:
-            return cls._instances[name]
-
         if name is None:
             import inspect
             caller_frame = inspect.stack()[1]
             caller_module = inspect.getmodule(caller_frame[0])
             name = caller_module.__name__ if caller_module else "unknown"
+
+        title_prefix = title
+
+        if name in cls._instances:
+            instance = cls._instances[name]
+            return _TitleLoggerAdapter(instance, {"title_prefix": title_prefix}) if title_prefix else instance
 
         try:
             # 解析配置文件
@@ -110,7 +134,8 @@ class LogHelper:
             console_handler.setFormatter(formatter)
             cls._instances[name].addHandler(console_handler)
 
-        return cls._instances[name]
+        instance = cls._instances[name]
+        return _TitleLoggerAdapter(instance, {"title_prefix": title_prefix}) if title_prefix else instance
 
     @classmethod
     def _replace_variables(cls, config: dict[str, Any], variables: dict[str, Any]):
@@ -144,11 +169,21 @@ class LogHelper:
         """
         直接使用 logging.basicConfig 配置日志（不使用 YAML 配置）
         适用于简单场景或临时调试
-        例如：
-            logger = LogHelper.basic_config(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
+        例如: logger = LogHelper.basic_config(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
         :param name: 日志实例名称
         :param kwargs: logging.basicConfig 接受的参数
         :return: 日志实例
         """
         logging.basicConfig(**kwargs)
         return logging.getLogger(name)
+
+
+if __name__ == '__main__':
+    logger = LogHelper.get_logger(title="[xxx]")
+    logger.info("Hello World!")
+
+    logger = LogHelper.get_logger(title="[yyy]")
+    logger.info("Hello World!")
+
+    logger = LogHelper.get_logger(title="[zzz]")
+    logger.info("Hello World!")
