@@ -37,7 +37,7 @@ class LogHelper:
     # 日志实例（单例）
     _instances: dict[str, logging.Logger] = {}
     # 匹配{变量名}的正则（支持字母、数字、下划线）
-    _var_pattern = re.compile(r"\{(\w+)\}")
+    _var_pattern = re.compile(r"\{(\w+)}")
     # 忽略的配置键（logging 模块原生配置项）
     NATIVE_KEYS = {"version", "disable_existing_loggers", "formatters", "handlers", "loggers", "root"}
     # 配置文件名称
@@ -63,7 +63,7 @@ class LogHelper:
         # 判断文件是否存在，不存在则读取默认配置
         if not os.path.exists(config_yaml_path):
             # 获取 YAML 文件的绝对路径
-            cls._logger.warning("使用默认日志配置文件")
+            cls._logger.warning("Using default config")
             config_yaml_path = files("agile.config").joinpath(cls.CONFIG_FILE_NAME)
         # 读取并解析 YAML 文件
         with open(str(config_yaml_path), "r", encoding="utf-8") as f:
@@ -90,6 +90,9 @@ class LogHelper:
             caller_frame = inspect.stack()[1]
             caller_module = inspect.getmodule(caller_frame[0])
             name = caller_module.__name__ if caller_module else "unknown"
+
+        # Help static type checkers understand `name` is always resolved here.
+        assert name is not None
 
         title_prefix = title
 
@@ -124,7 +127,7 @@ class LogHelper:
             cls._instances[name] = logging.getLogger(name)
 
         except Exception as e:
-            cls._logger.warning(f"读取日志配置（{cls.CONFIG_FILE_NAME}）失败: {e}，使用默认配置")
+            cls._logger.warning(f"Load config（{cls.CONFIG_FILE_NAME}）failed: {e}，Using default config")
             # 降级为默认控制台日志
             cls._instances[name] = logging.getLogger(name)
             cls._instances[name].setLevel(logging.DEBUG)
@@ -176,14 +179,3 @@ class LogHelper:
         """
         logging.basicConfig(**kwargs)
         return logging.getLogger(name)
-
-
-if __name__ == '__main__':
-    logger = LogHelper.get_logger(title="[xxx]")
-    logger.info("Hello World!")
-
-    logger = LogHelper.get_logger(title="[yyy]")
-    logger.info("Hello World!")
-
-    logger = LogHelper.get_logger(title="[zzz]")
-    logger.info("Hello World!")
