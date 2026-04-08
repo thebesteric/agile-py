@@ -5,7 +5,7 @@ from typing import Callable, Literal, Optional
 
 from .log_helper import LogHelper
 
-logger = LogHelper.get_logger()
+logger = LogHelper.get_logger(title="[TIMING]")
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
