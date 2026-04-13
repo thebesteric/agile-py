@@ -1,11 +1,16 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Union
+from collections.abc import Hashable
+from typing import Callable, Generic, Optional, TypeVar, Union
 import time
 
 from ..utils.time_unit import TimeUnit
 
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V")
+D = TypeVar("D")
 
-class BaseCache(ABC):
+
+class BaseCache(ABC, Generic[K, V]):
     """
     抽象缓存基类
     """
@@ -38,7 +43,7 @@ class BaseCache(ABC):
         return time.time() + resolved
 
     @abstractmethod
-    def set(self, key: str, value: Any, ttl: Optional[Union[int, float]] = None, time_unit: TimeUnit = TimeUnit.SECONDS) -> None:
+    def set(self, key: K, value: V, ttl: Optional[Union[int, float]] = None, time_unit: TimeUnit = TimeUnit.SECONDS) -> None:
         """
         使用可选的 ttl（配合 time_unit 指定单位）存储 key 对应的值
         :param key: 键
@@ -50,7 +55,7 @@ class BaseCache(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: K, default: D | None = None) -> V | D | None:
         """
         获取 key 的值；如果不存在或已过期则返回 default
         :param key: 键
@@ -60,7 +65,7 @@ class BaseCache(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def delete(self, key: str) -> None:
+    def delete(self, key: K) -> None:
         """
         删除缓存中的指定 key（若存在）
         :param key: 键
@@ -85,7 +90,7 @@ class BaseCache(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def items(self) -> list[tuple[str, Any]]:
+    def items(self) -> list[tuple[K, V]]:
         """
         返回缓存中所有 (key, value) 对的可迭代对象
         :return: Iterable[Tuple[str, Any]]
@@ -93,7 +98,7 @@ class BaseCache(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def keys(self) -> list[str]:
+    def keys(self) -> list[K]:
         """
         返回缓存中所有 key 的可迭代对象
         :return: Iterable[str]
@@ -101,7 +106,7 @@ class BaseCache(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def values(self) -> list[Any]:
+    def values(self) -> list[V]:
         """
         返回缓存中所有 value 的可迭代对象
         :return: Iterable[Any]
@@ -110,14 +115,14 @@ class BaseCache(ABC):
 
     def get_or_set(
             self,
-            key: str,
-            value: Union[Any, Callable[[], Any]],
+            key: K,
+            value: V | Callable[[], V],
             ttl: Optional[Union[int, float]] = None,
             time_unit: TimeUnit = TimeUnit.SECONDS,
-            on_get: Optional[Callable[[str, Any], None]] = None,
-            on_set: Optional[Callable[[str, Any], None]] = None,
+            on_get: Optional[Callable[[K, V], None]] = None,
+            on_set: Optional[Callable[[K, V], None]] = None,
             emit_get_after_set: bool = False,
-    ) -> Any:
+    ) -> V:
         """
         如果不存在，则添加到缓存中。
         value 既可以是直接值，也可以是一个无参可调用对象（如 lambda），

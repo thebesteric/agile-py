@@ -1,4 +1,5 @@
-from typing import Any, Optional, Union
+from collections.abc import Hashable
+from typing import Any, Optional, TypeVar, Union, get_args
 import threading
 import time
 
@@ -9,8 +10,12 @@ from agile.utils import LogHelper, TimeUnit
 
 logger = LogHelper.get_logger()
 
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V")
+D = TypeVar("D")
 
-class MemoryCache(BaseCache):
+
+class MemoryCache(BaseCache[K, V]):
     """
     本地缓存实现
     - 如果提供了 maxsize，我们使用 LRU 缓存，并通过包装带有过期时间戳的值来处理可选的每项 TTL
@@ -23,9 +28,13 @@ class MemoryCache(BaseCache):
             maxsize: int = 1024,
             default_ttl: Optional[Union[int, float]] = None,
             time_unit: TimeUnit = TimeUnit.SECONDS,
+            strict_types: bool = False,
     ) -> None:
         super().__init__(default_ttl=default_ttl, time_unit=time_unit)
         self._lock = threading.RLock()
+        self._strict_types = strict_types
+        self._key_type: type[Any] | None = None
+        self._value_type: type[Any] | None = None
         # 如果配置了默认 TTL，则创建具有该 ttl 的 TTLCache，否则使用 LRUCache
         if self._default_ttl is None:
             # 无 TTL：仅使用 LRU 驱逐
@@ -34,10 +43,83 @@ class MemoryCache(BaseCache):
             # 使用 TTLCache 创建实例
             self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=self._default_ttl)
 
+    def _resolve_types_from_generic(self) -> tuple[type[Any] | None, type[Any] | None]:
+        origin_type = getattr(self, "__orig_class__", None)
+        if origin_type is None:
+            return None, None
+        args = get_args(origin_type)
+        if len(args) != 2:
+            return None, None
+        key_type, value_type = args
+        resolved_key_type = key_type if isinstance(key_type, type) else None
+        resolved_value_type = value_type if isinstance(value_type, type) else None
+        return resolved_key_type, resolved_value_type
+
+    @staticmethod
+    def _format_type_error(field: str, expected: str, actual_type: type[Any], key: Any, value: Any) -> TypeError:
+        return TypeError(
+            f"Type validation failed: field={field}, expected={expected}, actual={actual_type.__name__}, "
+            f"key={key!r}, value={value!r}"
+        )
+
+    def _validate_types(self, key: K, value: V) -> None:
+        if not self._strict_types:
+            return
+        if not isinstance(key, Hashable):
+            raise self._format_type_error(
+                field="key",
+                expected="Hashable",
+                actual_type=type(key),
+                key=key,
+                value=value,
+            )
+
+        if self._key_type is None or self._value_type is None:
+            resolved_key_type, resolved_value_type = self._resolve_types_from_generic()
+            self._key_type = self._key_type or resolved_key_type
+            self._value_type = self._value_type or resolved_value_type
+
+        key_type = self._key_type
+        if key_type is not None and not isinstance(key, key_type):
+            raise self._format_type_error(
+                field="key",
+                expected=key_type.__name__,
+                actual_type=type(key),
+                key=key,
+                value=value,
+            )
+
+        if self._value_type is None:
+            self._value_type = type(value)
+        value_type = self._value_type
+        if value_type is None:
+            return
+        if not isinstance(value, value_type):
+            raise self._format_type_error(
+                field="value",
+                expected=value_type.__name__,
+                actual_type=type(value),
+                key=key,
+                value=value,
+            )
+
+    def _resolve_entry(self, key: K, entry: Any, default: D | None = None) -> tuple[bool, V | D | None]:
+        # 兼容两种存储形式：直接值（TTLCache 默认路径）和 (value, expiry) 包装值。
+        if isinstance(entry, tuple) and len(entry) == 2:
+            value, expiry = entry
+            if expiry is None or time.time() <= expiry:
+                return False, value
+            try:
+                del self._cache[key]
+            except Exception as ex:
+                logger.warning("Failed to delete expired cache entry for key '%s': %s", key, ex)
+            return True, default
+        return False, entry
+
     def set(
             self,
-            key: str,
-            value: Any,
+            key: K,
+            value: V,
             ttl: Optional[Union[int, float]] = None,
             time_unit: TimeUnit = TimeUnit.SECONDS,
     ) -> None:
@@ -45,6 +127,7 @@ class MemoryCache(BaseCache):
         设置一个带可选每项 ttl 的值
         """
         with self._lock:
+            self._validate_types(key, value)
             # 如果底层是 TTLCache 且 ttl 与默认值相同，直接设置（TTLCache 会自动处理过期）
             resolved_ttl = self._resolve_ttl(ttl, time_unit)
             if isinstance(self._cache, TTLCache) and (ttl is None or resolved_ttl == self._default_ttl):
@@ -56,7 +139,7 @@ class MemoryCache(BaseCache):
             expiry = self._expiry_timestamp(ttl, time_unit)
             self._cache[key] = (value, expiry)
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: K, default: D | None = None) -> V | D | None:
         """
         检索值
         如果我们存储了包装的 (value, expiry)，检查过期时间并在过期时返回默认值。
@@ -68,24 +151,10 @@ class MemoryCache(BaseCache):
             except KeyError:
                 return default
 
-            # 如果条目是包装的 (value, expiry) 元组，则进行验证
-            if isinstance(entry, tuple) and len(entry) == 2:
-                value, expiry = entry
-                if expiry is None:
-                    return value
-                if time.time() > expiry:
-                    # 已过期：删除并返回默认值
-                    try:
-                        del self._cache[key]
-                    except Exception as ex:
-                        logger.warning("Failed to delete expired cache entry for key '%s': %s", key, ex)
-                    return default
-                return value
+            _, value = self._resolve_entry(key, entry, default)
+            return value
 
-            # 否则，直接返回存储的值
-            return entry
-
-    def delete(self, key: str) -> None:
+    def delete(self, key: K) -> None:
         """
         删除指定 key 的缓存项（如果存在）
         :param key: 键
@@ -113,69 +182,31 @@ class MemoryCache(BaseCache):
         with self._lock:
             return len(self._cache)
 
-    def items(self) -> list[tuple[str, Any]]:
+    def items(self) -> list[tuple[K, V]]:
         """
         返回缓存中所有 (key, value) 对的可迭代对象
         :return: Iterable[Tuple[str, Any]]
         """
         with self._lock:
-            if isinstance(self._cache, TTLCache):
-                # TTLCache 自动处理过期
-                return list(self._cache.items())
-            else:
-                # LRUCache 需手动处理过期
-                now = time.time()
-                result = []
-                keys_to_delete = []
-                for k, (v, expiry) in self._cache.items():
-                    if expiry is None or now <= expiry:
-                        result.append((k, v))
-                    else:
-                        keys_to_delete.append(k)
-                # 清理过期项
-                for k in keys_to_delete:
-                    del self._cache[k]
-                return result
+            result: list[tuple[K, V]] = []
+            for k, entry in list(self._cache.items()):
+                expired, value = self._resolve_entry(k, entry, default=None)
+                if not expired:
+                    result.append((k, value))
+            return result
 
-    def keys(self) -> list[str]:
+    def keys(self) -> list[K]:
         """
         返回缓存中所有 key 的可迭代对象
         :return: Iterable[str]
         """
         with self._lock:
-            if isinstance(self._cache, TTLCache):
-                return list(self._cache.keys())
-            else:
-                now = time.time()
-                keys = []
-                keys_to_delete = []
-                for k, (v, expiry) in self._cache.items():
-                    if expiry is None or now <= expiry:
-                        keys.append(k)
-                    else:
-                        keys_to_delete.append(k)
-                for k in keys_to_delete:
-                    del self._cache[k]
-                return keys
+            return [k for k, _ in self.items()]
 
-    def values(self) -> list[Any]:
+    def values(self) -> list[V]:
         """
         返回缓存中所有 value 的可迭代对象
         :return: Iterable[Any]
         """
         with self._lock:
-            if isinstance(self._cache, TTLCache):
-                return list(self._cache.values())
-            else:
-                now = time.time()
-                values = []
-                keys_to_delete = []
-                for k, (v, expiry) in self._cache.items():
-                    if expiry is None or now <= expiry:
-                        values.append(v)
-                    else:
-                        keys_to_delete.append(k)
-                for k in keys_to_delete:
-                    del self._cache[k]
-                return values
-
+            return [v for _, v in self.items()]

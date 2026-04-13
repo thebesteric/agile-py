@@ -1,4 +1,5 @@
 import unittest
+from typing import Any, cast
 
 from agile.cache import MemoryCache
 
@@ -135,3 +136,45 @@ class TestMemoryCache(unittest.TestCase):
         # values
         values = set(self.cache.values())
         self.assertEqual(values, {1, 2, 3})
+
+    def test_generic_hint_usage(self):
+        int_cache: MemoryCache[str, int] = MemoryCache[str, int]()
+        int_cache.set("count", 7)
+
+        self.assertEqual(int_cache.get("count"), 7)
+        self.assertEqual(int_cache.get("missing", 0), 0)
+
+    def test_strict_types_default_false(self):
+        cache = MemoryCache()
+        cache.set(1, "ok")
+        self.assertEqual(cache.get(1), "ok")
+
+    def test_strict_types_key_and_value(self):
+        cache = MemoryCache(strict_types=True)
+        cache.set("count", 1)
+        cache.set(1, 2)
+        cache.set((1, "x"), 3)
+
+        with self.assertRaisesRegex(TypeError, r"field=key, expected=Hashable, actual=list, key=\[1, 2\], value=2"):
+            cache.set(cast(Any, [1, 2]), 2)
+
+        with self.assertRaisesRegex(TypeError, r"field=value, expected=int, actual=str, key='count', value='2'"):
+            cache.set("count", "2")
+
+    def test_strict_types_get_or_set(self):
+        cache = MemoryCache(strict_types=True)
+        self.assertEqual(cache.get_or_set("n", lambda: 1), 1)
+
+        with self.assertRaises(TypeError):
+            cache.get_or_set("m", lambda: "bad")
+
+    def test_strict_types_with_generic_runtime_check(self):
+        cache = MemoryCache[tuple, str](strict_types=True)
+        cache.set((1, 2), "ok")
+
+        with self.assertRaisesRegex(TypeError, r"field=key, expected=tuple, actual=str, key='1,2', value='ok'"):
+            cache.set("1,2", "ok")
+
+        with self.assertRaisesRegex(TypeError, r"field=value, expected=str, actual=int, key=\(3, 4\), value=123"):
+            cache.set((3, 4), 123)
+
