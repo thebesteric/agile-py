@@ -7,6 +7,8 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 
+from agile.agent.tools.tool_decorators import structured_tool
+
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -14,6 +16,14 @@ class ToolSpec:
     method: Callable[..., Any]
     description: str | None
     args_schema: type[BaseModel] | dict[str, Any] | None
+
+
+class CompatibleStructuredTool(StructuredTool):
+    """StructuredTool compatibility shim for code that expects callable-like naming."""
+
+    @property
+    def __name__(self) -> str:
+        return self.name
 
 
 class BaseStructuredTools(ABC):
@@ -49,7 +59,7 @@ class BaseStructuredTools(ABC):
         """Build StructuredTool instances for all discovered and ready tools."""
         self._registered_tools = []
         for spec in self.discover_tools():
-            structured_tool = StructuredTool.from_function(
+            structured_tool = CompatibleStructuredTool.from_function(
                 func=spec.method,
                 name=spec.name,
                 description=spec.description,
