@@ -147,6 +147,17 @@ class MilvusIndexSpec:
     index_name: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class MilvusCollectionConfig:
+    """
+    每个 collection 的字段映射配置
+    """
+    primary_field: str
+    text_field: str
+    vector_field: str
+    metadata_field: str = "metadata"
+
+
 class MilvusManager:
     """
     Milvus 数据库管理器
@@ -158,12 +169,14 @@ class MilvusManager:
             uri: str,
             token: str,
             embedding_model: BaseEmbedModel,
-            primary_field: str = "id",
-            text_field: str = "text",
-            vector_field: str = "vector",
+            default_primary_field: str = "id",
+            default_text_field: str = "text",
+            default_vector_field: str = "vector",
             default_collection_name: str = None,
             default_field_schemas: List[FieldSchema] = None,
             default_index_specs: List[MilvusIndexSpec | dict[str, Any]] = None,
+            collection_config: dict[str, MilvusCollectionConfig | dict[str, Any]] = None,
+            allow_dynamic_field: bool = False,
             index_type: MilvusIndexType = MilvusIndexType.IVF_FLAT,
             metric_type="L2",
             params_nlist: int = 128,
@@ -176,9 +189,9 @@ class MilvusManager:
         :param uri: Milvus URI
         :param token: Milvus 访问令牌
         :param embedding_model: 嵌入模型实例
-        :param primary_field: 主键字段名称
-        :param text_field: 文本字段名称
-        :param vector_field: 向量字段名称
+        :param default_primary_field: 主键字段名称
+        :param default_text_field: 文本字段名称
+        :param default_vector_field: 向量字段名称
         :param index_type: 索引类型
         :param metric_type: 距离度量类型
         :param params_nlist: 索引参数-聚类总数
@@ -203,9 +216,21 @@ class MilvusManager:
         self.embedding_model = embedding_model
 
         # 属性字段
-        self.primary_field = primary_field
-        self.text_field = text_field
-        self.vector_field = vector_field
+        self.default_primary_field = default_primary_field
+        self.default_text_field = default_text_field
+        self.default_vector_field = default_vector_field
+        self.default_metadata_field = "metadata"
+        self.allow_dynamic_field = allow_dynamic_field if allow_dynamic_field is not None else False
+
+        self._default_collection_config = self._normalize_collection_config(
+            MilvusCollectionConfig(
+                primary_field=self.default_primary_field,
+                text_field=self.default_text_field,
+                vector_field=self.default_vector_field,
+                metadata_field=self.default_metadata_field,
+            )
+        )
+        self._collection_configs: dict[str, MilvusCollectionConfig] = {}
 
         # 参数字段
         self.index_type = index_type
@@ -238,13 +263,15 @@ class MilvusManager:
 
         # 默认集合名称
         self.default_collection_name = default_collection_name
-        self.default_field_schemas = [
-            FieldSchema(name=self.primary_field, dtype=DataType.VARCHAR, is_primary=True, max_length=65535),
-            FieldSchema(name=self.text_field, dtype=DataType.VARCHAR, max_length=65535),
-            FieldSchema(name=self.vector_field, dtype=DataType.FLOAT_VECTOR, dim=self.vector_dim),
-            FieldSchema(name="metadata", dtype=DataType.JSON),
-        ] if not default_field_schemas else default_field_schemas
+        self.default_field_schemas = []
+        self.default_field_schemas = self._build_default_field_schemas(self._default_collection_config) if not default_field_schemas else default_field_schemas
+        self._validate_required_fields(self.default_field_schemas, self._default_collection_config)
         self.default_index_specs = self._normalize_index_specs(default_index_specs)
+
+        if collection_config:
+            for configured_collection_name, configured_collection in collection_config.items():
+                normalized_collection_name = self._normalize_explicit_collection_name(configured_collection_name)
+                self._collection_configs[normalized_collection_name] = self._normalize_collection_config(configured_collection)
 
         # 建立连接
         connections.connect(alias="default", uri=uri, token=token)
@@ -252,23 +279,35 @@ class MilvusManager:
     async def ensure_collection_ready(self,
                                       collection_name: str = None,
                                       field_schemas: List[FieldSchema] = None,
-                                      index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
+                                      index_specs: List[MilvusIndexSpec | dict[str, Any]] = None,
+                                      collection_config: MilvusCollectionConfig | dict[str, Any] = None,
+                                      allow_dynamic_field: bool | None = None):
         """
         预初始化 collection：确保存在、已加载、已就绪
         应在应用启动时调用，而不是在每次查询时调用
         :param collection_name: 集合名称
         :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
         :param index_specs: 额外索引规格列表，默认会先创建向量索引，再创建这里传入的索引
+        :param collection_config: 集合字段映射配置，如果提供则使用，否则使用默认字段映射
+        :param allow_dynamic_field: 是否允许动态字段
         :return:
         """
         try:
             # 使用默认集合名称
             collection_name = self._get_collection_name(collection_name)
+
+            if field_schemas:
+                field_names = {field.name for field in (field_schemas or [])}
+                # 增加默认的 metadata 字段
+                if "metadata" not in field_names:
+                    field_schemas.append(FieldSchema(name="metadata", dtype=DataType.JSON))
             # 确保集合存在
             self._ensure_collection_exists(
                 collection_name=collection_name,
                 field_schemas=field_schemas,
                 index_specs=index_specs,
+                collection_config=collection_config,
+                allow_dynamic_field=allow_dynamic_field
             )
 
             # 获取集合对象并加载到内存
@@ -297,11 +336,15 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
             # 获取集合对象
             collection = await self.get_collection(collection_name)
             # 如果集合不存在，抛出异常
             if not collection:
                 raise ValueError(f"Collection '{collection_name}' does not exist. Please ensure it is created and ready before inserting documents.")
+
+            schema_field_names = {field.name for field in collection.schema.fields}
+
             # 分流数据：dict 直接插入；Document 走向量化流程
             dict_documents: List[dict] = []
             doc_ids: List[str] = []
@@ -310,13 +353,14 @@ class MilvusManager:
 
             for item in documents:
                 if isinstance(item, dict):
+                    item.setdefault("metadata", {})
                     dict_documents.append(item)
                     continue
 
                 if not isinstance(item, Document):
                     raise TypeError(f"Unsupported document type: {type(item).__name__}")
 
-                _id = getattr(item, "id", None) or getattr(item, self.primary_field, None)
+                _id = getattr(item, "id", None) or getattr(item, self.default_primary_field, None)
                 text = getattr(item, "page_content", None)
                 metadata = getattr(item, "metadata", None) or {}
 
@@ -336,17 +380,39 @@ class MilvusManager:
 
             # dict 直接插入
             if dict_documents:
+                schema_dynamic_flag = getattr(getattr(collection, "schema", None), "enable_dynamic_field", None)
+                dynamic_field_enabled = schema_dynamic_flag if isinstance(schema_dynamic_flag, bool) else self.allow_dynamic_field
+
+                if not dynamic_field_enabled:
+                    allowed_fields = sorted(schema_field_names)
+                    unexpected_fields = sorted({
+                        key
+                        for dict_document in dict_documents
+                        for key in dict_document.keys()
+                        if key not in schema_field_names
+                    })
+                    if unexpected_fields:
+                        raise ValueError(
+                            f"Collection '{collection_name}' does not allow dynamic fields; allowed fields: {', '.join(allowed_fields)}; unexpected dict fields: {', '.join(unexpected_fields)}"
+                        )
+
                 for dict_document in dict_documents:
-                    embedding = await self.embedding_model.embed(dict_document.get(self.text_field) or "")
-                    dict_document.setdefault(self.vector_field, embedding)
+                    embedding = await self.embedding_model.embed(dict_document.get(collection_config.text_field) or "")
+                    dict_document.setdefault(collection_config.vector_field, embedding)
                 collection.insert(dict_documents)
 
             # Document 转 schema 顺序结构并插入
             if texts:
                 embeddings = await self.embedding_model.embed_batch(texts)
-                # 准备插入数据（顺序必须与 schema 定义一致）
-                # Schema 顺序: primary_field -> text_field -> vector_field -> metadata
-                entities = [doc_ids, texts, embeddings, metadata_list]
+                entities = [
+                    {
+                        collection_config.primary_field: _id,
+                        collection_config.text_field: text,
+                        collection_config.vector_field: embedding,
+                        collection_config.metadata_field: metadata,
+                    }
+                    for _id, text, embedding, metadata in zip(doc_ids, texts, embeddings, metadata_list)
+                ]
                 collection.insert(entities)
 
             collection.flush()  # 刷新确保数据持久化
@@ -379,6 +445,7 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
 
             # 获取集合对象
             collection = await self.get_collection(collection_name)
@@ -395,7 +462,7 @@ class MilvusManager:
                 """同步搜索函数，在线程池中执行"""
                 return collection.search(
                     data=[query_embedding],
-                    anns_field=self.vector_field,
+                    anns_field=collection_config.vector_field,
                     param=search_params if search_params else self.search_params,
                     limit=top_k,
                     expr=filter_expr,
@@ -440,7 +507,8 @@ class MilvusManager:
                                 *,
                                 collection_desc: str = None,
                                 field_schemas: List[FieldSchema] = None,
-                                index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
+                                index_specs: List[MilvusIndexSpec | dict[str, Any]] = None,
+                                collection_config: MilvusCollectionConfig | dict[str, Any] = None):
         """
         创建集合
         :param collection_name: 集合名称
@@ -461,6 +529,7 @@ class MilvusManager:
                 collection_desc=collection_desc,
                 field_schemas=field_schemas,
                 index_specs=index_specs,
+                collection_config=collection_config,
             )
         except Exception as e:
             logger.error(f"Failed to create collection {collection_name}: {str(e)}")
@@ -494,6 +563,7 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
             # 获取集合对象
             collection = await self.get_collection(collection_name)
             # 获取元素数量
@@ -520,6 +590,7 @@ class MilvusManager:
 
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
             # 获取集合对象
             collection = await self.get_collection(collection_name)
             if not collection:
@@ -527,7 +598,7 @@ class MilvusManager:
 
             # 构建删除表达式
             ids_str = ", ".join([f"'{id_}'" for id_ in ids])
-            expr = f"{self.primary_field} in [{ids_str}]"
+            expr = f"{collection_config.primary_field} in [{ids_str}]"
 
             # 执行删除
             collection.delete(expr)
@@ -555,6 +626,7 @@ class MilvusManager:
 
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
             # 获取集合对象
             collection = await self.get_collection(collection_name)
             if not collection:
@@ -562,7 +634,7 @@ class MilvusManager:
 
             # 构建查询表达式
             ids_str = ", ".join([f"'{id_}'" for id_ in ids])
-            expr = f"{self.primary_field} in [{ids_str}]"
+            expr = f"{collection_config.primary_field} in [{ids_str}]"
 
             # 执行查询
             results = collection.query(
@@ -574,11 +646,11 @@ class MilvusManager:
             documents = []
             for result in results:
                 doc = Document(
-                    id=result.get(self.primary_field),
-                    page_content=result.get(self.text_field, ""),
+                    id=result.get(collection_config.primary_field),
+                    page_content=result.get(collection_config.text_field, ""),
                     metadata={
-                        self.primary_field: result.get(self.primary_field),
-                        **result.get("metadata", {})
+                        collection_config.primary_field: result.get(collection_config.primary_field),
+                        **result.get(collection_config.metadata_field, {})
                     }
                 )
                 documents.append(doc)
@@ -599,13 +671,14 @@ class MilvusManager:
         try:
             # 获取集合名称
             collection_name = self._get_collection_name(collection_name)
+            collection_config = self._resolve_collection_config(collection_name)
             # 获取集合对象
             collection = await self.get_collection(collection_name)
             if not collection:
                 raise ValueError(f"Collection '{collection_name}' does not exist.")
 
             # 删除所有数据（使用空过滤条件删除所有记录）
-            collection.delete(expr=f"{self.primary_field} != ''")
+            collection.delete(expr=f"{collection_config.primary_field} != ''")
             collection.flush()
 
             logger.info(f"Successfully cleared all data from collection {collection_name}")
@@ -711,9 +784,88 @@ class MilvusManager:
             raise ValueError("Collection name must be provided either as an argument or set as default_collection_name")
         return normalized_collection_name.strip()
 
+    @staticmethod
+    def _normalize_explicit_collection_name(collection_name: str) -> str:
+        if not isinstance(collection_name, str) or not collection_name.strip():
+            raise ValueError("Collection name cannot be empty")
+        return collection_name.strip()
+
+    def _normalize_collection_config(
+            self,
+            collection_config: MilvusCollectionConfig | dict[str, Any]
+    ) -> MilvusCollectionConfig:
+
+        if isinstance(collection_config, MilvusCollectionConfig):
+            config = collection_config
+        elif isinstance(collection_config, dict):
+            config = MilvusCollectionConfig(
+                primary_field=cast(str, collection_config.get("primary_field")),
+                text_field=cast(str, collection_config.get("text_field")),
+                vector_field=cast(str, collection_config.get("vector_field")),
+                metadata_field=collection_config.get("metadata_field") or self.default_metadata_field,
+            )
+        else:
+            raise TypeError(f"Unsupported collection_config type: {type(collection_config).__name__}")
+
+        fields = [config.primary_field, config.text_field, config.vector_field, config.metadata_field]
+        if any((not isinstance(field_name, str) or not field_name.strip()) for field_name in fields):
+            raise ValueError("Collection config fields cannot be empty")
+
+        normalized = MilvusCollectionConfig(
+            primary_field=config.primary_field.strip(),
+            text_field=config.text_field.strip(),
+            vector_field=config.vector_field.strip(),
+            metadata_field=config.metadata_field.strip(),
+        )
+
+        if len({normalized.primary_field, normalized.text_field, normalized.vector_field, normalized.metadata_field}) != 4:
+            raise ValueError("Collection config fields must be unique")
+
+        return normalized
+
+    def add_collection_config(self,
+                              collection_name: str,
+                              collection_config: MilvusCollectionConfig | dict[str, Any]):
+        normalized_collection_name = self._normalize_explicit_collection_name(collection_name)
+        normalized_collection_config = self._normalize_collection_config(collection_config)
+
+        if normalized_collection_name in self._initialized_collections:
+            raise ValueError(
+                f"Collection '{normalized_collection_name}' is already initialized; collection_config cannot be changed"
+            )
+
+        self._collection_configs[normalized_collection_name] = normalized_collection_config
+
+    def _resolve_collection_config(self, collection_name: str = None) -> MilvusCollectionConfig:
+        resolved_collection_name = self._get_collection_name(collection_name)
+        return self._collection_configs.get(resolved_collection_name, self._default_collection_config)
+
+    def _build_default_field_schemas(self, collection_config: MilvusCollectionConfig) -> List[FieldSchema]:
+        return [
+            FieldSchema(name=collection_config.primary_field, dtype=DataType.VARCHAR, is_primary=True, max_length=65535),
+            FieldSchema(name=collection_config.text_field, dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name=collection_config.vector_field, dtype=DataType.FLOAT_VECTOR, dim=self.vector_dim),
+            FieldSchema(name=collection_config.metadata_field, dtype=DataType.JSON),
+        ] if not self.default_field_schemas else self.default_field_schemas
+
+    @staticmethod
+    def _validate_required_fields(field_schemas: List[FieldSchema], collection_config: MilvusCollectionConfig):
+        field_names = {field.name for field in (field_schemas or [])}
+        required_fields = {
+            collection_config.primary_field,
+            collection_config.text_field,
+            collection_config.vector_field,
+            collection_config.metadata_field,
+        }
+        missing_fields = [field_name for field_name in required_fields if field_name not in field_names]
+        if missing_fields:
+            raise ValueError(f"Missing required fields in schema: {', '.join(sorted(missing_fields))}")
+
     def _create_collection_schema(self,
                                   collection_desc: str = None,
-                                  field_schemas: List[FieldSchema] = None) -> CollectionSchema:
+                                  field_schemas: List[FieldSchema] = None,
+                                  *,
+                                  allow_dynamic_field: bool = None) -> CollectionSchema:
         """
         创建集合模式
         :param collection_desc: 集合描述
@@ -725,20 +877,22 @@ class MilvusManager:
         # 创建集合模式
         return CollectionSchema(
             fields=fields,
-            description=collection_desc or ""
+            description=collection_desc or "",
+            enable_dynamic_field=self.allow_dynamic_field if allow_dynamic_field is None else allow_dynamic_field,
         )
 
-    def _build_default_index_spec(self) -> MilvusIndexSpec:
+    def _build_default_index_spec(self, collection_config: MilvusCollectionConfig) -> MilvusIndexSpec:
         """
         构建默认向量索引规格
         """
         return MilvusIndexSpec(
-            field_name=self.vector_field,
+            field_name=collection_config.vector_field,
             index_type=self.index_type,
             index_params=self.index_params,
         )
 
-    def _normalize_index_spec(self, index_spec: MilvusIndexSpec | dict[str, Any]) -> MilvusIndexSpec:
+    @staticmethod
+    def _normalize_index_spec(index_spec: MilvusIndexSpec | dict[str, Any]) -> MilvusIndexSpec:
         """
         归一化单个索引规格
         """
@@ -789,7 +943,11 @@ class MilvusManager:
         dtype_name = getattr(dtype, "name", "") or str(dtype)
         return "VECTOR" in str(dtype_name).upper()
 
-    def _validate_index_specs(self, index_specs: List[MilvusIndexSpec], field_schemas: List[FieldSchema]):
+    def _validate_index_specs(self,
+                              index_specs: List[MilvusIndexSpec],
+                              field_schemas: List[FieldSchema],
+                              *,
+                              collection_config: MilvusCollectionConfig):
         """
         校验索引规格是否可用于当前字段定义
         """
@@ -814,18 +972,21 @@ class MilvusManager:
                         f"Index type '{index_type.index_type_value}' is not compatible with field '{index_spec.field_name}'"
                     )
 
-            if index_spec.field_name == self.vector_field and not index_type.is_vector:
+            if index_spec.field_name == collection_config.vector_field and not index_type.is_vector:
                 raise ValueError(
                     f"Field '{index_spec.field_name}' is the vector field and must use a vector index"
                 )
 
-    def _build_index_params(self, index_spec: MilvusIndexSpec) -> dict[str, Any]:
+    def _build_index_params(self,
+                            index_spec: MilvusIndexSpec,
+                            *,
+                            collection_config: MilvusCollectionConfig) -> dict[str, Any]:
         """
         组装 Milvus create_index 所需参数
         """
         index_type = MilvusIndexType.normalize_index_type(index_spec.index_type)
 
-        if index_spec.field_name == self.vector_field and index_type == self.index_type and not index_spec.index_params:
+        if index_spec.field_name == collection_config.vector_field and index_type == self.index_type and not index_spec.index_params:
             return dict(self.index_params)
 
         if index_type.is_vector and not index_spec.index_params:
@@ -847,22 +1008,27 @@ class MilvusManager:
             collection: Collection,
             *,
             field_schemas: List[FieldSchema],
+            collection_config: MilvusCollectionConfig,
             index_specs: List[MilvusIndexSpec] = None,
     ):
         """
         为集合创建索引
         """
-        resolved_index_specs = [self._build_default_index_spec(), *self.default_index_specs]
+        resolved_index_specs = [self._build_default_index_spec(collection_config), *self.default_index_specs]
         if index_specs:
             resolved_index_specs.extend(index_specs)
 
-        self._validate_index_specs(resolved_index_specs, field_schemas)
+        self._validate_index_specs(
+            resolved_index_specs,
+            field_schemas,
+            collection_config=collection_config,
+        )
 
         for index_spec in resolved_index_specs:
             # pass index_name if provided (pymilvus supports optional index_name)
             collection.create_index(
                 field_name=index_spec.field_name,
-                index_params=self._build_index_params(index_spec),
+                index_params=self._build_index_params(index_spec, collection_config=collection_config),
                 index_name=index_spec.index_name,
             )
 
@@ -871,26 +1037,40 @@ class MilvusManager:
                                   collection_name: str = None,
                                   collection_desc: str = None,
                                   field_schemas: List[FieldSchema] = None,
-                                  index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
+                                  index_specs: List[MilvusIndexSpec | dict[str, Any]] = None,
+                                  collection_config: MilvusCollectionConfig | dict[str, Any] = None,
+                                  allow_dynamic_field: bool | None = None):
         """
         确保集合存在，如果不存在则创建
         :param collection_name: 集合名称
         :param collection_desc: 集合描述
         :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
         :param index_specs: 额外索引规格列表
+        :param allow_dynamic_field: 是否允许动态字段
         :return:
         """
         # 使用缓存避免重复检查
         collection_name = self._get_collection_name(collection_name)
+
+        if collection_config is not None:
+            self.add_collection_config(collection_name, collection_config)
+
         if collection_name in self._initialized_collections:
             return
 
-        resolved_field_schemas = field_schemas or self.default_field_schemas
+        resolved_collection_config = self._resolve_collection_config(collection_name)
+
+        resolved_field_schemas = field_schemas or self._build_default_field_schemas(resolved_collection_config)
+        self._validate_required_fields(resolved_field_schemas, resolved_collection_config)
         normalized_index_specs = self._normalize_index_specs(index_specs)
 
         if not utility.has_collection(collection_name):
             # 创建集合
-            schema = self._create_collection_schema(collection_desc, resolved_field_schemas)
+            schema = self._create_collection_schema(
+                collection_desc,
+                resolved_field_schemas,
+                allow_dynamic_field=allow_dynamic_field,
+            )
             collection = Collection(
                 name=collection_name,
                 schema=schema
@@ -899,6 +1079,7 @@ class MilvusManager:
             self._create_collection_indexes(
                 collection,
                 field_schemas=resolved_field_schemas,
+                collection_config=resolved_collection_config,
                 index_specs=normalized_index_specs,
             )
             logger.info(f"Created new collection: {collection_name}")
@@ -906,26 +1087,28 @@ class MilvusManager:
         # 标记为已初始化
         self._initialized_collections.add(collection_name)
 
-    def trans_to_documents(self, results: SearchResult | list) -> list[Document]:
+    def trans_to_documents(self, results: SearchResult | list, collection_name: str = None) -> list[Document]:
         """
         将 Milvus 搜索结果包装为 Document 对象
         :param results: 搜索结果
+        :param collection_name: 集合名称，用于解析字段配置
         :return: 包装后的文档列表
         """
         documents = []
+        collection_config = self._resolve_collection_config(collection_name)
         for hits in results:
             for hit in hits:
-                primary_key = hit.entity.get(self.primary_field)
+                primary_key = hit.entity.get(collection_config.primary_field)
                 # 将 entity 转为字典
-                entity_data = hit.entity.get("entity")
+                entity_data = hit.entity.get("entity") or {}
                 metadata = {
-                    self.primary_field: primary_key,
+                    collection_config.primary_field: primary_key,
                     "score": hit.distance,
                     **entity_data,
                 }
                 doc = Document(
                     id=primary_key,
-                    page_content=entity_data.get(self.text_field),
+                    page_content=entity_data.get(collection_config.text_field) or "",
                     metadata=metadata
                 )
                 documents.append(doc)
