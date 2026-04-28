@@ -1,7 +1,8 @@
 import asyncio
 import uuid
+from dataclasses import dataclass
 from enum import Enum, unique
-from typing import List, Set, Any
+from typing import List, Set, Any, cast
 
 from langchain_core.documents import Document
 from pymilvus import MilvusClient, DataType, CollectionSchema, FieldSchema, Collection, connections, utility, SearchResult
@@ -118,6 +119,33 @@ class MilvusIndexType(Enum):
 
         return False
 
+    @classmethod
+    def normalize_index_type(cls, index_type: "MilvusIndexType | str") -> "MilvusIndexType":
+        """
+        将字符串或枚举值归一化为 MilvusIndexType
+        """
+        if isinstance(index_type, cls):
+            return index_type
+
+        if isinstance(index_type, str):
+            clean_index_str = index_type.strip().upper()
+            for enum_member in cls:
+                if enum_member.index_type_value == clean_index_str:
+                    return enum_member
+
+        raise ValueError(f"Invalid Milvus index type: {index_type}")
+
+
+@dataclass(frozen=True, slots=True)
+class MilvusIndexSpec:
+    """
+    Milvus 集合索引规格
+    """
+    field_name: str
+    index_type: MilvusIndexType | str
+    index_params: dict[str, Any] | None = None
+    index_name: str | None = None
+
 
 class MilvusManager:
     """
@@ -135,6 +163,7 @@ class MilvusManager:
             vector_field: str = "vector",
             default_collection_name: str = None,
             default_field_schemas: List[FieldSchema] = None,
+            default_index_specs: List[MilvusIndexSpec | dict[str, Any]] = None,
             index_type: MilvusIndexType = MilvusIndexType.IVF_FLAT,
             metric_type="L2",
             params_nlist: int = 128,
@@ -215,13 +244,15 @@ class MilvusManager:
             FieldSchema(name=self.vector_field, dtype=DataType.FLOAT_VECTOR, dim=self.vector_dim),
             FieldSchema(name="metadata", dtype=DataType.JSON),
         ] if not default_field_schemas else default_field_schemas
+        self.default_index_specs = self._normalize_index_specs(default_index_specs)
 
         # 建立连接
         connections.connect(alias="default", uri=uri, token=token)
 
     async def ensure_collection_ready(self,
                                       collection_name: str = None,
-                                      field_schemas: List[FieldSchema] = None):
+                                      field_schemas: List[FieldSchema] = None,
+                                      index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
         """
         预初始化 collection：确保存在、已加载、已就绪
         应在应用启动时调用，而不是在每次查询时调用
@@ -233,7 +264,11 @@ class MilvusManager:
             # 使用默认集合名称
             collection_name = self._get_collection_name(collection_name)
             # 确保集合存在
-            self._ensure_collection_exists(collection_name=collection_name, field_schemas=field_schemas)
+            self._ensure_collection_exists(
+                collection_name=collection_name,
+                field_schemas=field_schemas,
+                index_specs=index_specs,
+            )
 
             # 获取集合对象并加载到内存
             collection = Collection(name=collection_name)
@@ -373,18 +408,21 @@ class MilvusManager:
         return None
 
     async def create_collection(self,
-                                collection_name: str,
+                                collection_name: str = None,
                                 *,
                                 collection_desc: str = None,
-                                field_schemas: List[FieldSchema] = None):
+                                field_schemas: List[FieldSchema] = None,
+                                index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
         """
         创建集合
         :param collection_name: 集合名称
         :param collection_desc: 集合描述
         :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :param index_specs: 额外索引规格列表，默认会先创建向量索引，再创建这里传入的索引
         :return:
         """
         try:
+            collection_name = self._get_collection_name(collection_name)
             if utility.has_collection(collection_name):
                 logger.warning(f"Collection {collection_name} already exists, cannot create.")
                 return
@@ -393,7 +431,8 @@ class MilvusManager:
             self._ensure_collection_exists(
                 collection_name=collection_name,
                 collection_desc=collection_desc,
-                field_schemas=field_schemas
+                field_schemas=field_schemas,
+                index_specs=index_specs,
             )
         except Exception as e:
             logger.error(f"Failed to create collection {collection_name}: {str(e)}")
@@ -639,10 +678,10 @@ class MilvusManager:
         :param collection_name: 集合名称
         :return: 集合名称
         """
-        collection_name = collection_name or self.default_collection_name
-        if not (collection_name and collection_name.strip()):
+        normalized_collection_name = collection_name or self.default_collection_name
+        if not isinstance(normalized_collection_name, str) or not normalized_collection_name.strip():
             raise ValueError("Collection name must be provided either as an argument or set as default_collection_name")
-        return collection_name.strip()
+        return normalized_collection_name.strip()
 
     def _create_collection_schema(self,
                                   collection_desc: str = None,
@@ -661,16 +700,156 @@ class MilvusManager:
             description=collection_desc or ""
         )
 
+    def _build_default_index_spec(self) -> MilvusIndexSpec:
+        """
+        构建默认向量索引规格
+        """
+        return MilvusIndexSpec(
+            field_name=self.vector_field,
+            index_type=self.index_type,
+            index_params=self.index_params,
+        )
+
+    def _normalize_index_spec(self, index_spec: MilvusIndexSpec | dict[str, Any]) -> MilvusIndexSpec:
+        """
+        归一化单个索引规格
+        """
+        if isinstance(index_spec, MilvusIndexSpec):
+            spec = index_spec
+        elif isinstance(index_spec, dict):
+            field_name = index_spec.get("field_name")
+            index_type = index_spec.get("index_type")
+            index_name = index_spec.get("index_name") or index_spec.get("name") or field_name
+            spec = MilvusIndexSpec(
+                field_name=cast(str, field_name),
+                index_type=cast(MilvusIndexType | str, index_type),
+                index_params=index_spec.get("index_params", index_spec.get("params")),
+                index_name=index_name,
+            )
+        else:
+            raise TypeError(f"Unsupported index spec type: {type(index_spec).__name__}")
+
+        if not isinstance(spec.field_name, str) or not spec.field_name.strip():
+            raise ValueError("Index spec field_name cannot be empty")
+
+        if not MilvusIndexType.is_valid_index_type(spec.index_type):
+            raise ValueError(f"Invalid Milvus index type: {spec.index_type}")
+
+        if spec.index_params is not None and not isinstance(spec.index_params, dict):
+            raise TypeError("Index spec index_params must be a dict or None")
+
+        return MilvusIndexSpec(
+            field_name=spec.field_name.strip(),
+            index_type=MilvusIndexType.normalize_index_type(spec.index_type),
+            index_params=spec.index_params,
+        )
+
+    def _normalize_index_specs(self, index_specs: List[MilvusIndexSpec | dict[str, Any]] = None) -> list[MilvusIndexSpec]:
+        """
+        归一化索引规格列表
+        """
+        if not index_specs:
+            return []
+
+        return [self._normalize_index_spec(index_spec) for index_spec in index_specs]
+
+    @staticmethod
+    def _is_vector_dtype(dtype: Any) -> bool:
+        """
+        判断字段类型是否为向量类型
+        """
+        dtype_name = getattr(dtype, "name", "") or str(dtype)
+        return "VECTOR" in str(dtype_name).upper()
+
+    def _validate_index_specs(self, index_specs: List[MilvusIndexSpec], field_schemas: List[FieldSchema]):
+        """
+        校验索引规格是否可用于当前字段定义
+        """
+        field_type_map = {field.name: field.dtype for field in (field_schemas or [])}
+        seen_field_names: Set[str] = set()
+
+        for index_spec in index_specs:
+            if index_spec.field_name in seen_field_names:
+                raise ValueError(f"Duplicate index spec for field '{index_spec.field_name}'")
+            seen_field_names.add(index_spec.field_name)
+
+            index_type = MilvusIndexType.normalize_index_type(index_spec.index_type)
+            field_dtype = field_type_map.get(index_spec.field_name)
+
+            if field_type_map and field_dtype is None:
+                raise ValueError(f"Field '{index_spec.field_name}' does not exist in collection schema")
+
+            if field_dtype is not None:
+                field_is_vector = self._is_vector_dtype(field_dtype)
+                if field_is_vector != index_type.is_vector:
+                    raise ValueError(
+                        f"Index type '{index_type.index_type_value}' is not compatible with field '{index_spec.field_name}'"
+                    )
+
+            if index_spec.field_name == self.vector_field and not index_type.is_vector:
+                raise ValueError(
+                    f"Field '{index_spec.field_name}' is the vector field and must use a vector index"
+                )
+
+    def _build_index_params(self, index_spec: MilvusIndexSpec) -> dict[str, Any]:
+        """
+        组装 Milvus create_index 所需参数
+        """
+        index_type = MilvusIndexType.normalize_index_type(index_spec.index_type)
+
+        if index_spec.field_name == self.vector_field and index_type == self.index_type and not index_spec.index_params:
+            return dict(self.index_params)
+
+        if index_type.is_vector and not index_spec.index_params:
+            raise ValueError(
+                f"Vector index spec for field '{index_spec.field_name}' must provide index_params"
+            )
+
+        index_params: dict[str, Any] = {"index_type": index_type.index_type_value}
+        if index_type.is_vector:
+            index_params["metric_type"] = self.metric_type
+
+        if index_spec.index_params:
+            index_params.update(index_spec.index_params)
+
+        return index_params
+
+    def _create_collection_indexes(
+        self,
+        collection: Collection,
+        *,
+        field_schemas: List[FieldSchema],
+        index_specs: List[MilvusIndexSpec] = None,
+    ):
+        """
+        为集合创建索引
+        """
+        resolved_index_specs = [self._build_default_index_spec(), *self.default_index_specs]
+        if index_specs:
+            resolved_index_specs.extend(index_specs)
+
+        self._validate_index_specs(resolved_index_specs, field_schemas)
+
+        for index_spec in resolved_index_specs:
+            # pass index_name if provided (pymilvus supports optional index_name)
+            collection.create_index(
+                field_name=index_spec.field_name,
+                index_params=self._build_index_params(index_spec),
+                index_name=index_spec.index_name,
+            )
+
     def _ensure_collection_exists(self,
                                   *,
                                   collection_name: str = None,
                                   collection_desc: str = None,
-                                  field_schemas: List[FieldSchema] = None):
+                                  field_schemas: List[FieldSchema] = None,
+                                  index_specs: List[MilvusIndexSpec | dict[str, Any]] = None):
         """
         确保集合存在，如果不存在则创建
         :param collection_name: 集合名称
         :param collection_desc: 集合描述
         :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :param index_specs: 额外索引规格列表
         :return:
         """
         # 使用缓存避免重复检查
@@ -678,17 +857,21 @@ class MilvusManager:
         if collection_name in self._initialized_collections:
             return
 
+        resolved_field_schemas = field_schemas or self.default_field_schemas
+        normalized_index_specs = self._normalize_index_specs(index_specs)
+
         if not utility.has_collection(collection_name):
             # 创建集合
-            schema = self._create_collection_schema(collection_desc, field_schemas)
+            schema = self._create_collection_schema(collection_desc, resolved_field_schemas)
             collection = Collection(
                 name=collection_name,
                 schema=schema
             )
             # 创建索引
-            collection.create_index(
-                field_name=self.vector_field,
-                index_params=self.index_params
+            self._create_collection_indexes(
+                collection,
+                field_schemas=resolved_field_schemas,
+                index_specs=normalized_index_specs,
             )
             logger.info(f"Created new collection: {collection_name}")
 
