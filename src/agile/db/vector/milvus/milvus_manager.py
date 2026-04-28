@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from enum import Enum, unique
-from typing import List, Set
+from typing import List, Set, Any
 
 from langchain_core.documents import Document
 from pymilvus import MilvusClient, DataType, CollectionSchema, FieldSchema, Collection, connections, utility, SearchResult
@@ -297,6 +297,7 @@ class MilvusManager:
                      collection_name: str = None,
                      filter_expr: str = None,
                      output_fields: List[str] = None,
+                     search_params: dict[str, Any] = None,
                      top_k: int = 5,
                      timeout: float = None) -> list[Document]:
         """
@@ -305,6 +306,7 @@ class MilvusManager:
         :param collection_name: 集合名称
         :param filter_expr: 过滤表达式
         :param output_fields: 要返回的字段列表，如果为 None 则返回所有字段
+        :param search_params: 搜索参数字典，如果为 None 则使用默认搜索参数
         :param top_k: 返回数量
         :param timeout: 超时时间（秒）
         :return: 搜索结果
@@ -329,7 +331,7 @@ class MilvusManager:
                 return collection.search(
                     data=[query_embedding],
                     anns_field=self.vector_field,
-                    param=self.search_params,
+                    param=search_params if search_params else self.search_params,
                     limit=top_k,
                     expr=filter_expr,
                     output_fields=output_fields or ["*"],
