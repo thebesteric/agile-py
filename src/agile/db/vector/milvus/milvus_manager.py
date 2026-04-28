@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 from enum import Enum, unique
-from typing import List, Set, Any, cast
+from typing import List, Set, Any, cast, Union
 
 from langchain_core.documents import Document
 from pymilvus import MilvusClient, DataType, CollectionSchema, FieldSchema, Collection, connections, utility, SearchResult
@@ -258,6 +258,7 @@ class MilvusManager:
         应在应用启动时调用，而不是在每次查询时调用
         :param collection_name: 集合名称
         :param field_schemas: 可选的字段模式列表，如果提供则使用，否则使用默认字段定义
+        :param index_specs: 额外索引规格列表，默认会先创建向量索引，再创建这里传入的索引
         :return:
         """
         try:
@@ -282,14 +283,16 @@ class MilvusManager:
             logger.error(f"Failed to ensure collection '{collection_name}' ready: {str(e)}")
             raise e
 
-    async def insert_documents(self,
-                               documents: List[Document],
-                               collection_name: str = None):
+    async def insert(self,
+                     documents: List[Union[Document, dict]],
+                     collection_name: str = None):
         """
-        插入文档到集合
+        插入文档到集合。
+        - 若元素为 dict：按原样直接插入（调用方需保证字段与 schema 匹配）
+        - 若元素为 langchain Document：按 primary/text/vector/metadata 结构转换后插入
         :param collection_name: 集合名称
-        :param documents: 文档列表
-        :return:
+        :param documents: Document 或 dict 的列表
+        :return: None
         """
         try:
             # 获取集合名称
@@ -299,26 +302,53 @@ class MilvusManager:
             # 如果集合不存在，抛出异常
             if not collection:
                 raise ValueError(f"Collection '{collection_name}' does not exist. Please ensure it is created and ready before inserting documents.")
+            # 分流数据：dict 直接插入；Document 走向量化流程
+            dict_documents: List[dict] = []
+            doc_ids: List[str] = []
+            texts: List[str] = []
+            metadata_list: List[dict] = []
 
-            # 准备数据
-            doc_ids = [str(uuid.uuid4()) for _ in documents]
-            texts = [doc.page_content for doc in documents]
-            metadatas = [doc.metadata for doc in documents]
+            for item in documents:
+                if isinstance(item, dict):
+                    dict_documents.append(item)
+                    continue
 
-            # 生成嵌入向量
-            embeddings = await self.embedding_model.embed_batch(texts)
+                if not isinstance(item, Document):
+                    raise TypeError(f"Unsupported document type: {type(item).__name__}")
 
-            # 准备插入数据（顺序必须与 schema 定义一致）
-            # Schema 顺序: primary_field -> text_field -> vector_field -> metadata
-            entities = [
-                doc_ids,  # primary_field
-                texts,  # text_field
-                embeddings,  # vector_field
-                metadatas  # metadata
-            ]
+                _id = getattr(item, "id", None) or getattr(item, self.primary_field, None)
+                text = getattr(item, "page_content", None)
+                metadata = getattr(item, "metadata", None) or {}
 
-            # 插入数据
-            collection.insert(entities)
+                if not _id:
+                    _id = str(uuid.uuid4())
+
+                if text is None:
+                    # 将空内容视为空字符串，避免嵌入器报错；调用方应负责文本有效性
+                    text = ""
+
+                if not isinstance(metadata, dict):
+                    metadata = {"value": metadata}
+
+                doc_ids.append(str(_id))
+                texts.append(text)
+                metadata_list.append(metadata)
+
+            # dict 直接插入
+            if dict_documents:
+                for dict_document in dict_documents:
+                    embedding = await self.embedding_model.embed(dict_document.get(self.text_field) or "")
+                    dict_document.setdefault(self.vector_field, embedding)
+                collection.insert(dict_documents)
+
+            # Document 转 schema 顺序结构并插入
+            if texts:
+                embeddings = await self.embedding_model.embed_batch(texts)
+                # 准备插入数据（顺序必须与 schema 定义一致）
+                # Schema 顺序: primary_field -> text_field -> vector_field -> metadata
+                entities = [doc_ids, texts, embeddings, metadata_list]
+                collection.insert(entities)
+
             collection.flush()  # 刷新确保数据持久化
 
             logger.info(f"Successfully inserted {len(documents)} documents into collection {collection_name}")
@@ -334,7 +364,7 @@ class MilvusManager:
                      output_fields: List[str] = None,
                      search_params: dict[str, Any] = None,
                      top_k: int = 5,
-                     timeout: float = None) -> list[Document]:
+                     timeout: float = None) -> SearchResult | list:
         """
         在 Milvus 集合中进行异步相似度搜索
         :param query: 查询语句
@@ -373,14 +403,12 @@ class MilvusManager:
                     timeout=timeout
                 )
 
-            # 使用 asyncio.to_thread 运行同步函数
+            # 使用 asyncio.to_thread 运行同步函数，返回原始 SearchResult
             results = await asyncio.to_thread(_do_search)
 
-            # 处理搜索结果
-            documents = self.trans_to_documents(results)
-
-            logger.info(f"Async search completed, found {len(documents)} results")
-            return documents
+            # 返回原始结果，使用者如需 Document 列表可以调用 self.trans_to_documents(results)
+            logger.info(f"Async search completed for collection '{collection_name}'")
+            return results
 
         except asyncio.TimeoutError:
             logger.error(f"Milvus search timeout after {timeout}s for query: {query[:50]}...")
@@ -815,11 +843,11 @@ class MilvusManager:
         return index_params
 
     def _create_collection_indexes(
-        self,
-        collection: Collection,
-        *,
-        field_schemas: List[FieldSchema],
-        index_specs: List[MilvusIndexSpec] = None,
+            self,
+            collection: Collection,
+            *,
+            field_schemas: List[FieldSchema],
+            index_specs: List[MilvusIndexSpec] = None,
     ):
         """
         为集合创建索引
@@ -878,7 +906,7 @@ class MilvusManager:
         # 标记为已初始化
         self._initialized_collections.add(collection_name)
 
-    def trans_to_documents(self, results: SearchResult) -> list[Document]:
+    def trans_to_documents(self, results: SearchResult | list) -> list[Document]:
         """
         将 Milvus 搜索结果包装为 Document 对象
         :param results: 搜索结果
@@ -888,14 +916,17 @@ class MilvusManager:
         for hits in results:
             for hit in hits:
                 primary_key = hit.entity.get(self.primary_field)
+                # 将 entity 转为字典
+                entity_data = hit.entity.get("entity")
+                metadata = {
+                    self.primary_field: primary_key,
+                    "score": hit.distance,
+                    **entity_data,
+                }
                 doc = Document(
                     id=primary_key,
-                    page_content=hit.entity.get(self.text_field),
-                    metadata={
-                        self.primary_field: primary_key,
-                        "score": hit.distance,
-                        **hit.entity.get("metadata", {})
-                    }
+                    page_content=entity_data.get(self.text_field),
+                    metadata=metadata
                 )
                 documents.append(doc)
         return documents

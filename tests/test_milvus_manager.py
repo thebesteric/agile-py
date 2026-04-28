@@ -1,7 +1,9 @@
 import unittest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
+
+from langchain_core.documents import Document
 
 SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_PATH) not in sys.path:
@@ -117,6 +119,69 @@ class TestMilvusManager(unittest.IsolatedAsyncioTestCase):
 
         ensure_mock.assert_called_once_with(collection_name="docs", field_schemas=None, index_specs=index_specs)
         collection_mock.load.assert_called_once()
+
+    async def test_insert_documents_direct_insert_for_dict(self):
+        collection_mock = MagicMock()
+        embed_batch_mock = AsyncMock(return_value=[[0.0, 0.0]])
+        payload = [{"id": "d1", "text": "hello", "vector": [0.1, 0.2], "metadata": {"lang": "zh"}}]
+
+        with patch.object(self.manager, "get_collection", AsyncMock(return_value=collection_mock)), patch.object(
+            self.manager.embedding_model, "embed_batch", embed_batch_mock
+        ):
+            await self.manager.insert(payload, collection_name="docs")
+
+        collection_mock.insert.assert_called_once_with(payload)
+        collection_mock.flush.assert_called_once()
+        embed_batch_mock.assert_not_awaited()
+
+    async def test_insert_documents_transform_document(self):
+        collection_mock = MagicMock()
+        embed_batch_mock = AsyncMock(return_value=[[0.9, 0.8]])
+        payload = [Document(id="doc-1", page_content="hello", metadata={"lang": "zh"})]
+
+        with patch.object(self.manager, "get_collection", AsyncMock(return_value=collection_mock)), patch.object(
+            self.manager.embedding_model, "embed_batch", embed_batch_mock
+        ):
+            await self.manager.insert(payload, collection_name="docs")
+
+        embed_batch_mock.assert_awaited_once_with(["hello"])
+        collection_mock.flush.assert_called_once()
+        collection_mock.insert.assert_called_once()
+
+        inserted_entities = collection_mock.insert.call_args.args[0]
+        self.assertEqual(inserted_entities[0], ["doc-1"])
+        self.assertEqual(inserted_entities[1], ["hello"])
+        self.assertEqual(inserted_entities[2], [[0.9, 0.8]])
+        self.assertEqual(inserted_entities[3], [{"lang": "zh"}])
+
+    async def test_insert_documents_direct_insert_for_dict_with_custom_fields(self):
+        custom_manager = MilvusManager(
+            uri="http://localhost:19530",
+            token="root:Milvus",
+            embedding_model=DummyEmbedModel(),
+            default_collection_name="docs",
+            primary_field="doc_id",
+            text_field="body",
+            vector_field="embedding",
+        )
+        collection_mock = MagicMock()
+        embed_batch_mock = AsyncMock(return_value=[[0.0, 0.0]])
+        payload = [{
+            "doc_id": "d1",
+            "body": "hello",
+            "embedding": [0.1, 0.2],
+            "metadata": {"lang": "zh"},
+            "biz_type": "note",
+        }]
+
+        with patch.object(custom_manager, "get_collection", AsyncMock(return_value=collection_mock)), patch.object(
+            custom_manager.embedding_model, "embed_batch", embed_batch_mock
+        ):
+            await custom_manager.insert(payload, collection_name="docs")
+
+        collection_mock.insert.assert_called_once_with(payload)
+        collection_mock.flush.assert_called_once()
+        embed_batch_mock.assert_not_awaited()
 
 
 if __name__ == "__main__":
