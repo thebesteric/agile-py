@@ -25,3 +25,11 @@ class StringBuilder(StringIO):
     def length(self):
         """获取当前长度"""
         return len(self.to_string())
+
+    def __str__(self):
+        """字符串表现形式"""
+        return self.to_string()
+
+    def __repr__(self):
+        """提供对象的调试表示"""
+        return f"StringBuilder({self.to_string()!r})"
