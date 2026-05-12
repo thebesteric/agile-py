@@ -2,6 +2,7 @@ from abc import abstractmethod, ABC
 from typing import List
 
 import numpy as np
+import tiktoken
 from pydantic import BaseModel, ConfigDict
 
 from agile.utils import LogHelper
@@ -14,9 +15,12 @@ class BaseEmbedModel(BaseModel, ABC):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     @abstractmethod
-    def __init__(self, /, dim: int = 1536, **data):
+    def __init__(self, /, dim: int = 1536, max_token: int = 8192, encoding_name: str | None = "cl100k_base", **data):
         super().__init__(**data)
         self.dim = dim or 1536
+        self.max_token = max_token
+        self.encoding_name = encoding_name or "cl100k_base"
+        self.encoding = tiktoken.get_encoding(self.encoding_name)
 
     @abstractmethod
     async def embed(self, text: str, model: str = None, dim: int = None) -> List[float]:
@@ -67,3 +71,13 @@ class BaseEmbedModel(BaseModel, ABC):
 
         sim = dot_product / (norm1 * norm2)
         return float(max(min(sim, 1.0), -1.0))
+
+    def get_tokens(self, text: str) -> tuple[List[int], int]:
+        """
+        获取文本对应的 token 列表和 token 数量
+        :param text: 输入文本
+        :return: 是否超过限制
+        """
+        tokens = self.encoding.encode(text)
+        token_count = len(tokens)
+        return tokens, token_count

@@ -1,19 +1,28 @@
 from enum import Enum
-from typing import TypeVar, Optional
+from typing import Generic, Iterator, Optional, Protocol, Self, TypeVar, cast
 
-EnumT = TypeVar("EnumT", bound="LabeledStrEnum")
+ValueT = TypeVar("ValueT")
 
 
-class LabeledStrEnum(str, Enum):
+class _EnumIterableClass(Protocol[ValueT]):
+    def __iter__(self) -> Iterator[ValueT]: ...
+
+
+class LabeledEnumBase(Generic[ValueT]):
     """
-    String enum with a human-readable label for prompt/display usage.
+    Shared behavior for labeled enums.
+
+    Subclasses provide their own underlying value type (e.g. ``str`` or ``int``)
+    and set ``_value_`` / ``_label`` in ``__new__``.
     """
 
-    def __new__(cls, value: str, label: str):
-        obj = str.__new__(cls, value)  # type: ignore[arg-type]
-        obj._value_ = value
-        obj._label = label
-        return obj
+    _label: str
+    value: ValueT
+    name: str
+
+    @classmethod
+    def _iter_members(cls: type[Self]) -> Iterator[Self]:
+        return iter(cast(_EnumIterableClass[Self], cast(object, cls)))
 
     @property
     def label(self) -> str:
@@ -23,26 +32,52 @@ class LabeledStrEnum(str, Enum):
         return f"{self.value} ({self.label})"
 
     @classmethod
-    def get_all(cls) -> list[tuple[str, str]]:
-        return [(e.value, e.label) for e in cls]
+    def get_all(cls) -> list[tuple[ValueT, str]]:
+        return [(e.value, e.label) for e in cls._iter_members()]
 
     @classmethod
     def get_format_instructions(cls, title: Optional[str] = None) -> str:
-        body = "\n".join(f"  - {e.value}: {e.label}" for e in cls)
+        body = "\n".join(f"  - {e.value}: {e.label}" for e in cls._iter_members())
         if title:
             return f"{title}\n{body}"
         return body
 
     @classmethod
-    def from_value(cls: type[EnumT], value: str) -> Optional[EnumT]:
-        for e in cls:
+    def from_value(cls: type[Self], value: ValueT) -> Optional[Self]:
+        for e in cls._iter_members():
             if e.value == value:
                 return e
         return None
 
     @classmethod
-    def from_name(cls: type[EnumT], name: str) -> Optional[EnumT]:
-        for e in cls:
+    def from_name(cls: type[Self], name: str) -> Optional[Self]:
+        for e in cls._iter_members():
             if e.name == name:
                 return e
         return None
+
+
+class LabeledStrEnum(str, LabeledEnumBase[str], Enum):
+    """
+    String enum with a human-readable label for prompt/display usage.
+    """
+
+    def __new__(cls, value: str, label: str) -> Self:
+        obj = str.__new__(cls, value)  # type: ignore[arg-type]
+        obj._value_ = value
+        obj._label = label
+        return cast(Self, obj)
+
+
+class LabeledIntEnum(int, LabeledEnumBase[int], Enum):
+    """
+    Integer enum with a human-readable label for prompt/display usage.
+    """
+
+    def __new__(cls, value: int, label: str) -> Self:
+        obj = int.__new__(cls, value)  # type: ignore[arg-type]
+        obj._value_ = value
+        obj._label = label
+        return cast(Self, obj)
+
+
