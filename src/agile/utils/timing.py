@@ -88,7 +88,7 @@ def timing(_func=None, *, func_name: Optional[str] = None, log_level: LogLevel =
             start_time = time.perf_counter()
             try:
                 result = func(*args, **kwargs)
-                _log_success(display_name, start_time, is_async=True)
+                _log_success(display_name, start_time, is_async=False)
                 return result
             except Exception as e:
                 _log_error(display_name, start_time, e, is_async=False)
@@ -112,8 +112,12 @@ def timing_stack(
     precision: int = 2,
     include: TimingStackInclude = "all",
     output_format: TimingStackOutput = "text",
+    warning_at: Optional[float] = None,
     include_patterns: Optional[Iterable[str] | str] = None,
     exclude_patterns: Optional[Iterable[str] | str] = None,
+    include_protected: bool = False,
+    include_private: bool = False,
+    include_magic: bool = False,
 ):
     """
     记录函数完整调用栈的耗时，只需在最顶层函数上装饰一次。
@@ -123,8 +127,12 @@ def timing_stack(
     :param precision: 时间精度（毫秒小数位数），默认 2 位
     :param include: 输出耗时类型：inclusive/exclusive/all
     :param output_format: 输出格式：text/json
+    :param warning_at: 标记耗时超过该值（毫秒）的函数调用
     :param include_patterns: 仅包含匹配的函数（支持 * 和 **）
     :param exclude_patterns: 排除匹配的函数（支持 * 和 **）
+    :param include_protected: 是否包含受保护的函数（单前导下划线）
+    :param include_private: 是否包含私有函数（双前导下划线但不以双下划线结尾）
+    :param include_magic: 是否包含魔术方法（双前后下划线）
     :return: 装饰器函数
     """
 
@@ -135,6 +143,7 @@ def timing_stack(
         end: Optional[float] = None
         is_async: bool = False
         children: List["_CallNode"] = field(default_factory=list)
+        warning: bool = field(default=False)
 
         @property
         def duration(self) -> float:
@@ -143,6 +152,15 @@ def timing_stack(
             return self.end - self.start
 
     _active_flag = contextvars.ContextVar("timing_stack_active", default=False)
+
+    # Convert warning_at (ms) to seconds for internal duration comparisons
+    if warning_at is None:
+        _warning_threshold_seconds: Optional[float] = None
+    else:
+        try:
+            _warning_threshold_seconds = float(warning_at) / 1000.0
+        except Exception:
+            _warning_threshold_seconds = None
 
     def _format_ms(_elapsed_time: float) -> str:
         return f"{_elapsed_time * 1000:.{precision}f} ms"
@@ -176,6 +194,17 @@ def timing_stack(
             return False
         if exclude_regex and _match_any(name, exclude_regex):
             return False
+        # apply underscore-based visibility filters on the simple function name is like 'module.func'; extract the last part
+        short = name.rsplit(".", 1)[-1]
+        # magic method: starts and ends with double underscore
+        if not include_magic and short.startswith("__") and short.endswith("__"):
+            return False
+        # private (name starts with double underscore but NOT magic)
+        if not include_private and short.startswith("__") and not short.endswith("__"):
+            return False
+        # protected (single leading underscore but not double)
+        if not include_protected and short.startswith("_") and not short.startswith("__"):
+            return False
         return True
 
     def decorator(func: Callable) -> Callable:
@@ -189,6 +218,14 @@ def timing_stack(
                 lines = [
                     "=" * 80,
                     f"📊 Function {report_title} full call stack timing",
+                    # Include the effective timing_stack parameters to aid debugging
+                    (
+                        f"Parameters: include={include}, output_format={output_format}, "
+                        f"include_patterns={include_list}, exclude_patterns={exclude_list}, "
+                        f"precision={precision}, log_level={log_level}, func_name={func_name}, "
+                        f"include_protected={include_protected}, include_private={include_private}, include_magic={include_magic}, "
+                        f"warning_at(ms)={warning_at}"
+                    ),
                     "-" * 80
                 ]
 
@@ -199,7 +236,8 @@ def timing_stack(
                 def _render(node: _CallNode, depth: int) -> None:
                     indent = "  " * depth
                     mode_label = "async" if node.is_async else "sync"
-                    parts = [f"{indent}▶ {node.name}", mode_label]
+                    warning_token = "⚠️ " if node.warning else ""
+                    parts = [f"{indent}▶ {warning_token}{node.name}", mode_label]
                     if include in ("inclusive", "all"):
                         parts.append(f"inclusive = {_format_ms(node.duration)}")
                     if include in ("exclusive", "all"):
@@ -215,6 +253,7 @@ def timing_stack(
                             "mode": "async" if node.is_async else "sync",
                             "inclusive_ms": round(node.duration * 1000, precision),
                             "exclusive_ms": round(_exclusive_ms(node) * 1000, precision),
+                            "warning": bool(node.warning),
                             "children": [_to_dict(child) for child in node.children],
                         }
 
@@ -273,6 +312,13 @@ def timing_stack(
                 elif node in stack:
                     stack.remove(node)
                 node.end = time.perf_counter()
+                # mark warning if threshold provided
+                try:
+                    if _warning_threshold_seconds is not None:
+                        node.warning = (node.duration >= _warning_threshold_seconds)
+                except Exception:
+                    # defensive: do not let profiling fail because of warning computation
+                    node.warning = False
                 tracked.pop(frame_id, None)
                 return _profile
 
@@ -287,6 +333,8 @@ def timing_stack(
                     return await func(*args, **kwargs)
 
                 state = {"stack": [], "roots": [], "tracked": {}}
+                # measure outer wall-clock time as a fallback in case profiler misses the top-level frame
+                outer_start = time.perf_counter()
                 token = _active_flag.set(True)
                 previous_profile = _install_profile(state)
                 error: Optional[Exception] = None
@@ -298,6 +346,19 @@ def timing_stack(
                 finally:
                     sys.setprofile(previous_profile)
                     _active_flag.reset(token)
+                    outer_end = time.perf_counter()
+                    # Build one synthetic root for outer wall-clock time to avoid inflating
+                    # every captured root frame to the same duration.
+                    node = _CallNode(name=report_title, start=outer_start, end=outer_end, is_async=True)
+                    if state["roots"]:
+                        node.children = state["roots"]
+                    # mark synthetic root warning if threshold provided
+                    try:
+                        if _warning_threshold_seconds is not None:
+                            node.warning = (node.duration >= _warning_threshold_seconds)
+                    except Exception:
+                        node.warning = False
+                    state["roots"] = [node]
                     _build_report(state, error)
 
                 return result
@@ -310,6 +371,8 @@ def timing_stack(
                 return func(*args, **kwargs)
 
             state = {"stack": [], "roots": [], "tracked": {}}
+            # measure outer wall-clock time as a fallback in case profiler misses the top-level frame
+            outer_start = time.perf_counter()
 
             token = _active_flag.set(True)
             previous_profile = _install_profile(state)
@@ -322,6 +385,17 @@ def timing_stack(
             finally:
                 sys.setprofile(previous_profile)
                 _active_flag.reset(token)
+                outer_end = time.perf_counter()
+                node = _CallNode(name=report_title, start=outer_start, end=outer_end, is_async=False)
+                if state["roots"]:
+                    node.children = state["roots"]
+                # mark synthetic root warning if threshold provided
+                try:
+                    if _warning_threshold_seconds is not None:
+                        node.warning = (node.duration >= _warning_threshold_seconds)
+                except Exception:
+                    node.warning = False
+                state["roots"] = [node]
                 _build_report(state, error)
 
             return result
