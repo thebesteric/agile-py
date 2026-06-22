@@ -13,8 +13,10 @@ logger = LogHelper.get_logger()
 
 # 支持的变量类型（类型对象而非值）
 VarType = Union[
-    Type[str], Type[bool], Type[int], Type[float], Type[list], Type[dict], Type[tuple], Type[set], Type[datetime.datetime], Type[datetime.date], Type[
-        datetime.time], Type[None]]
+    Type[str], Type[bool], Type[int], Type[float], Type[list], Type[dict], Type[tuple], Type[set],
+    Type[datetime.datetime], Type[datetime.date], Type[datetime.time],
+    Type[None]
+]
 
 
 class EnvHelper:
@@ -25,7 +27,7 @@ class EnvHelper:
     ACCEPT_DATE_FORMATS = ["%Y-%m-%d", "%Y/%m/%d"]
     ACCEPT_TIME_FORMATS = ["%H:%M:%S", "%H:%M"]
 
-    def __init__(self, env_file_path: str | Path = None, override: bool = False, env_mode: str = None):
+    def __init__(self, env_file_path: str | Path | None = None, override: bool = False, env_mode: str | None = None):
         """
         初始化环境变量读取器
         :param env_file_path: 环境变量文件路径
@@ -34,7 +36,7 @@ class EnvHelper:
         self.env_mode = env_mode.strip().lower() if env_mode else os.getenv("ENV_MODE") or os.getenv("env_mode")
         self._load_env_files(env_file_path, override)
 
-    def _load_env_files(self, env_file_path: str | Path = None, override: bool = False):
+    def _load_env_files(self, env_file_path: str | Path | None = None, override: bool = False):
         """
         加载环境文件（优先级：环境专属文件 > 通用 .env 文件）
         :param env_file_path: 环境变量文件路径
@@ -85,7 +87,7 @@ class EnvHelper:
         # 设置环境变量
         os.environ[key] = str_value
 
-    def get_required(self, key: str, var_type: VarType = None) -> Any:
+    def get_required(self, key: str, var_type: VarType | None = None) -> Any:
         """
         获取必需的环境变量值，如果不存在则抛出异常
 
@@ -109,7 +111,7 @@ class EnvHelper:
 
         return self.get(key, default=None, var_type=var_type)
 
-    def get(self, key: str, default: Any = None, var_type: VarType = None) -> Any:
+    def get(self, key: str, default: Any = None, var_type: VarType | None = None) -> Any:
         """
         获取环境变量值，并进行类型转换
         :param key: 环境变量的键
